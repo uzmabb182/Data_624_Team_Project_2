@@ -1,0 +1,30 @@
+---
+title: "Project_2_Data_624"
+author: "Mubashira Qari"
+date: "2026-04-18"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+  word_document:
+    toc: true
+---
+
+```{r message=FALSE, warning=FALSE}
+
+library(tidyverse)
+library(fpp3)
+library(naniar) # Excellent for visualizing missingness
+
+#  Read the raw data
+
+url <- "https://raw.githubusercontent.com/uzmabb182/Data_624_Predictive_Analytics/refs/heads/main/StudentData.csv"
+std_eval_df <- read_csv(url_1)
+
+url_1 <- "https://raw.githubusercontent.com/uzmabb182/Data_624_Predictive_Analytics/refs/heads/main/StudentEvaluation.csv"
+std_df <- read_csv(url)
+
+#view(std_df)
+view(std_eval_df)
+```
+
