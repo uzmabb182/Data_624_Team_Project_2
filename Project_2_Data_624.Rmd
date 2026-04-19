@@ -18,13 +18,13 @@ library(naniar) # Excellent for visualizing missingness
 
 #  Read the raw data
 
-url <- "https://raw.githubusercontent.com/uzmabb182/Data_624_Predictive_Analytics/refs/heads/main/StudentData.csv"
-std_eval_df <- read_csv(url_1)
-
-url_1 <- "https://raw.githubusercontent.com/uzmabb182/Data_624_Predictive_Analytics/refs/heads/main/StudentEvaluation.csv"
+url <- "https://raw.githubusercontent.com/uzmabb182/Data_624_Team_Project_2/refs/heads/main/StudentData.csv"
 std_df <- read_csv(url)
 
+url_1 <- "https://raw.githubusercontent.com/uzmabb182/Data_624_Team_Project_2/refs/heads/main/StudentEvaluation.csv"
+std_eval_df <- read_csv(url_1)
+
 #view(std_df)
-view(std_eval_df)
+#view(std_eval_df)
 ```
 
