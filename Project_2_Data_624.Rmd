@@ -28,7 +28,7 @@ eval_data <- read.csv("https://raw.githubusercontent.com/uzmabb182/Data_624_Team
 
 
 #view(train_data)
-view(eval_data)
+#view(eval_data)
 ```
 
 =====================================================
@@ -48,7 +48,163 @@ view(eval_data)
 **Data Preparation (eg, imputation, transformations)**
 =====================================================
 
+**Target Variable (PH) Validation**
+
+First we examine the PH column in the training set and remove records that do not have an associated PH value.
+If we include rows in our training set where the PH value is missing (NA), the mathematical algorithms will have no answer key to learn from for those specific rows. While we can use statistical methods to guess (impute) missing predictor values like temperature, we should never guess the target value in the training data, as this introduces artificial bias into our model. Removing these 4 records ensures our model is built only on confirmed, historical production facts.
+
 ```{r}
+# Count missing values in the target variable
+missing_ph <- sum(is.na(train_data$PH))
+print(paste("Missing PH values in training set:", missing_ph))
+
+# Remove rows where PH is NA
+train_data <- train_data |>
+  filter(!is.na(PH))
+
+head(train_data)
+```
+```{r}
+# Replace all periods with underscores in the column names
+colnames(train_data) <- gsub("\\.", "_", colnames(train_data))
+colnames(eval_data) <- gsub("\\.", "_", colnames(eval_data))
+
+# Quick check to see the new names
+names(train_data)
+```
+
+
+```{r}
+head(train_data)
+```
+
+
+
+**Categorical Variable Transformation (Brand Code)**
+
+In this step, we focus on the Brand Code column. This is the only categorical non-numeric variable in our dataset, representing the different beverage brands (A, B, C, and D).
+
+```{r}
+# Identify the most frequent brand (the Mode) 
+# Note the use of the underscore (_) as per our previous step
+common_brand <- names(sort(table(train_data$Brand_Code), decreasing = TRUE))[1]
+
+# Fill missing Brand Codes in both datasets with the most common brand
+train_data$Brand_Code[is.na(train_data$Brand_Code)] <- common_brand
+eval_data$Brand_Code[is.na(eval_data$Brand_Code)] <- common_brand
+
+# Convert to Factor so the model can process them as categories
+train_data$Brand_Code <- as.factor(train_data$Brand_Code)
+eval_data$Brand_Code <- as.factor(eval_data$Brand_Code)
+
+# Verify the fix - this will display the distribution of Brands A, B, C, and D
+table(train_data$Brand_Code)
+```
+Imputation (The Mode): Since we have 120 missing brand codes in the training data, we shouldn't just delete them since that's a lot of data to lose. By filling them with the most frequent brand, we maintain the dataset's size while making a statistically likely guess.
+
+Factor Conversion: Most mathematical models in R like Linear Regression or Random Forest cannot read raw text like Brand A. By converting the column to a Factor, we are telling R that this is a category. R then internally converts these into dummy variables (0s and 1s) so the math can process the impact of each brand on the PH levels.
+
+
+**Handling Numeric Missing Values (Median Imputation)**
+
+While we removed rows with missing PH (our target), we cannot afford to delete rows just because a single sensor like MFR or Fill_Ounces failed to record a value. We have over 200 missing values in some columns; deleting them would lose nearly 10% of our data.
+
+```{r}
+#  Use the 'caret' package to calculate the median for every numeric column
+# We exclude 'PH' because it is our target and should not be used to calculate its own predictors
+# and 'Brand_Code' because it is a factor (not numeric)
+preProc_values <- preProcess(train_data %>% select(-PH, -Brand_Code), 
+                             method = "medianImpute")
+
+# Apply the calculated medians to fill the NAs in the training set
+train_data <- predict(preProc_values, train_data)
+
+# Apply the EXACT SAME medians to the evaluation set
+# This ensures consistency—we treat the new data the same way we treated our historical data
+eval_data <- predict(preProc_values, eval_data)
+
+# Final check: Ensure there are zero missing values left in the dataset
+sum(is.na(train_data))
 
 ```
+Data Preservation: By filling in the missing sensor readings, we keep all 2,567 rows of our production data available for the model to learn from.
+
+Why Median? We use the Median instead of the Mean because manufacturing sensors often have outlier spikes. The median is the middle value and is much more robust; it isn't skewed by one or two crazy readings like a mean would be.
+
+Consistency: It is a data science rule that you must use the statistics from your Training data to fill your Evaluation data. If we calculated a new median for the evaluation set, we would be leaking information about the future into our process, which can make our model look more accurate than it actually is.
+
+**Removing "Near-Zero Variance" (NZV) Predictors**
+
+Now that our data is complete and no more missing values, we need to check if all our columns are actually useful. In a manufacturing environment, some sensors might be stuck or record a constant value for every single batch. Variables that don't change or change very little provide zero predictive power and can cause mathematical instability in our models.
+
+we will identify and remove these dead weight columns.
+
+```{r}
+# Identify columns with near-zero variance
+# saveMetrics = TRUE gives us a breakdown of which columns are problematic
+nzv_stats <- train_data |> 
+  nearZeroVar(saveMetrics = TRUE)
+
+# Extract the names of columns that ARE useful (nzv == FALSE)
+# This keeps the columns that actually have enough variation to help predict PH
+keep_cols <- nzv_stats |> 
+  filter(nzv == FALSE) |> 
+  rownames()
+
+# Filter both the training and evaluation datasets
+# We use 'all_of' for training and 'any_of' for evaluation to handle the missing PH column safely
+train_data <- train_data |> 
+  select(all_of(keep_cols))
+
+eval_data <- eval_data |> 
+  select(any_of(keep_cols))
+
+# Check how many variables remain
+ncol(train_data)
+```
+
+Model Efficiency: Every variable we include increases the complexity of our model. By removing columns like Hyd_Pressure1 if they only contain "0", we simplify the math and make the model faster without losing any intellectual value.
+
+The Curse of Dimensionality: Including too many useless predictors can actually make a model less accurate. It's like trying to find a signal in a room full of static; by turning off the static i.e., constant variables, the real predictive factors like Temperature or Carb_Pressure become much clearer to the algorithm.
+
+Operational Focus: From a business perspective, if a sensor doesn't vary, it isn't a lever we can pull to adjust the PH. Removing it from the report allows the manufacturing team to focus only on the factors that actually drive quality.
+
+**Handling Outliers and Sensor Spikes (Winsorizing)**
+
+In manufacturing, sensors can occasionally spike due to electrical noise or temporary mechanical glitches. These extreme values can act like a heavy weight on one side of a scale, pulling our predictive model's math away from the actual trend.
+
+Instead of deleting these records, we will Winsorize them, which means we cap the extreme 1% at the top and bottom of each sensor's range.
+
+```{r}
+# Define a function to cap outliers at the 1st and 99th percentiles
+cap_outliers <- function(x) {
+  if (is.numeric(x)) {
+    # Calculate the 1% and 99% boundaries
+    q_bounds <- quantile(x, probs = c(0.01, 0.99), na.rm = TRUE)
+    
+    # Cap values: if it's too low, move it to the 1st percentile; 
+    # if it's too high, move it to the 99th
+    x[x < q_bounds[1]] <- q_bounds[1]
+    x[x > q_bounds[2]] <- q_bounds[2]
+  }
+  return(x)
+}
+
+# Apply this to all numeric columns in the training data using the native pipe
+train_data <- train_data |> 
+  mutate(across(where(is.numeric), cap_outliers))
+
+# Apply the same logic to the evaluation data
+eval_data <- eval_data |> 
+  mutate(across(where(is.numeric), cap_outliers))
+
+# Briefly check the range of a key variable like 'Temperature' to see the effect
+train_data$Temperature |> range()
+```
+Model Stability: Linear models are very sensitive to outliers. A single impossible sensor reading could change the predicted PH for thousands of normal batches. This step ensures our model stays focused on the standard operating procedure.
+
+Preserving the Sample Size: If we simply deleted outlier rows, we would lose valuable information from the other 30 sensors that were working perfectly at that same moment. Capping allows us to keep the row while "neutralizing" the glitch.
+
+Business Realism: In the ABC Beverage plant, there are physical limits to how hot or pressurized a tank can get. Values beyond the 99th percentile are often sensor artifacts rather than real physical states.
+
 
