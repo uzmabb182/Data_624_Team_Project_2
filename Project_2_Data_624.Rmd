@@ -207,4 +207,51 @@ Preserving the Sample Size: If we simply deleted outlier rows, we would lose val
 
 Business Realism: In the ABC Beverage plant, there are physical limits to how hot or pressurized a tank can get. Values beyond the 99th percentile are often sensor artifacts rather than real physical states.
 
+**Data Partitioning (Training vs. Validation Split)**
 
+Now that the data is clean, complete, and the outliers are stabilized, we reach the most critical part of data preparation: The Split.
+
+We cannot use all our data to build the model. If we do, we won't know if the model is actually learning the manufacturing process or just memorizing the historical data. We will split our 2,567 records into an 80% Training set and a 20% Validation set.
+
+```{r}
+# Set a random seed so the results are reproducible 
+# (This ensures we get the same split every time we run the script)
+set.seed(42)
+
+# Create the partition index
+# We use the PH column to ensure both sets have a balanced distribution of PH values
+train_index <- train_data$PH |> 
+  createDataPartition(p = 0.8, list = FALSE)
+
+# Create the two subsets
+# training_set: The data the model will use to "learn"
+# validation_set: The data we use to "test" the model's accuracy
+training_set   <- train_data[train_index, ]
+validation_set <- train_data[-train_index, ]
+
+# Final Verification: Check the size of our sets
+print(paste("Training rows:", nrow(training_set)))
+print(paste("Validation rows:", nrow(validation_set)))
+```
+
+Preventing Overfitting: Overfitting happens when a model becomes so specific to the training data that it fails to predict new, unseen data correctly. By keeping 20% of the data hidden during training, we create a "blind test" to prove the model's effectiveness.
+
+Quality Assurance for Leadership: When we report to the board, we need to say: Our model is X% accurate on data it has never seen before. This split is what gives us the evidence to make that claim.
+
+Native Pipe Efficiency: Using the |> pipe to feed the target variable into the partition function ensures the process is streamlined and mirrors the real-world flow of information.
+
+This completes the Data Preparation phase:
+
+Correctly formatted (Brand_Code as factors).
+
+Cleaned of missing values (Imputed).
+
+Leaned out (32 high-impact columns remaining).
+
+Balanced (Outliers capped).
+
+Split and ready for the Modeling Phase.
+
+=====================================================
+**Build Models (training data)**
+=====================================================
