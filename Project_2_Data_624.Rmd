@@ -1,6 +1,6 @@
 ---
 title: "Project_2_Data_624"
-author: "Mubashira Qari"
+author: "Farhod Ibragimov, Alexander Simon, Jackie Yee, Mubashira Qari"
 date: "2026-04-18"
 output:
   html_document:
