@@ -176,6 +176,53 @@ dim(test_data_final)
 
 ```
 
+**Transformations to Resolve Skewness**
+
+Many predictive models (especially linear models and Neural Networks) perform much better when the predictors have a symmetric, normal distribution.
+
+
+**Skewness Visualization**
+
+```{r}
+# Load required libraries
+library(tidyverse) # Contains dplyr, tidyr, and ggplot2
+library(e1071)     # Contains the skewness() function
+
+# Starting the pipeline with your cleaned training data
+train_data_final |>
+  
+  # Keeping only the numeric columns
+  select(where(is.numeric)) |>
+  
+  # Calculating skewness for every remaining column
+  summarise(across(everything(), ~skewness(.x, na.rm = TRUE))) |>
+  
+  # Reshaping the data from wide (one row) to long (two columns: Predictor, Skewness)
+  pivot_longer(cols = everything(), names_to = "Predictor", values_to = "Skewness") |>
+  
+  # Adding the flag to identify which variables are highly skewed
+  mutate(Highly_Skewed = ifelse(abs(Skewness) > 1, "High Skew", "Acceptable Skew")) |>
+  
+  # Pipe the formatted data directly into ggplot
+  ggplot(aes(x = reorder(Predictor, Skewness), y = Skewness, fill = Highly_Skewed)) +
+  geom_col(color = "black", linewidth = 0.2) +
+  coord_flip() + 
+  scale_fill_manual(values = c("Acceptable Skew" = "skyblue", "High Skew" = "salmon")) +
+  
+  # Add the safe threshold lines
+  geom_hline(yintercept = c(-1, 1), linetype = "dashed", color = "red", linewidth = 1) +
+  
+  labs(
+    title = "Skewness of All Numeric Predictors",
+    subtitle = "Variables extending past the red dashed lines need Box-Cox transformation",
+    x = "Predictors",
+    y = "Skewness Value"
+  ) +
+  theme_minimal()
+```
+
+The chart identifies which numeric predictors in your dataset have a high skewness extending beyond the safe +/- 1 threshold (red lines), highlighting exactly which variables need a Box-Cox transformation to fix their skewed distributions.
+
 **Centering and Scaling (Individual Predictor Transformations)**
 
 Centering: Subtracting the average (mean) of a predictor from all its values so that the new mean is zero.
@@ -270,3 +317,4 @@ Before scaling, models get tricked into thinking variables with naturally larger
 By centering the averages to 0 and scaling the spread to 1, both variables are mathematically forced onto the exact same playing field (ranging from roughly -3 to +3). 
 
 While the chart only displays two variables for clarity, this exact same balancing process was applied to all 32 numeric columns so the model can evaluate them fairly.
+
