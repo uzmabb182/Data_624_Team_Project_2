@@ -269,4 +269,4 @@ Before scaling, models get tricked into thinking variables with naturally larger
 
 By centering the averages to 0 and scaling the spread to 1, both variables are mathematically forced onto the exact same playing field (ranging from roughly -3 to +3). 
 
-While the chart only displays two variables for clarity, this exact same balancing process was applied behind the scenes to all 32 numeric columns so your model can evaluate them fairly.
+While the chart only displays two variables for clarity, this exact same balancing process was applied to all 32 numeric columns so the model can evaluate them fairly.
