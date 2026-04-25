@@ -221,7 +221,7 @@ train_data_final |>
   theme_minimal()
 ```
 
-The chart identifies which numeric predictors in your dataset have a high skewness extending beyond the safe +/- 1 threshold (red lines), highlighting exactly which variables need a Box-Cox transformation to fix their skewed distributions.
+The chart identifies which numeric predictors in dataset have a high skewness extending beyond the safe +/- 1 threshold (red lines), highlighting exactly which variables need a Box-Cox transformation to fix their skewed distributions.
 
 **Centering and Scaling (Individual Predictor Transformations)**
 
