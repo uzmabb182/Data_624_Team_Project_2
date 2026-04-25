@@ -131,7 +131,7 @@ nzv_analysis <- nearZeroVar(filtered_data, saveMetrics = TRUE)
 
 nzv_analysis
 ```
-When we look at the raw data for Hyd Pressure1, we can see exactly why it triggered both alarms:
+When we look at the raw data for Hyd Pressure1, we can see exactly why it matched both conditions:
 
 Frequency Ratio (~31.1): The value 0.0 appears 840 times. 
 Since 840 / 27 approx. 31.1, it far exceeds the imbalance threshold of 19 and this is below 10%. 
