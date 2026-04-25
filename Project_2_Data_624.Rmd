@@ -59,8 +59,8 @@ skim(train_data)
 ```{r}
 
 # View the structure and summary of the data
-str(train_data)
-summary(train_data)
+#str(train_data)
+#summary(train_data)
 ```
 
 **Target Variable (PH) Validation**
@@ -181,7 +181,7 @@ dim(test_data_final)
 Many predictive models (especially linear models and Neural Networks) perform much better when the predictors have a symmetric, normal distribution.
 
 
-**Skewness Visualization**
+**Checking Skewness**
 
 ```{r}
 # Load required libraries
@@ -251,7 +251,7 @@ train_data_unskewed |>
   head(10)
 ```
 
-**Verify Skewness After Box-Cox**
+**Verify Skewness**
 
 ```{r}
 # Load required libraries
@@ -308,7 +308,7 @@ train_data_unskewed |>
   
   labs(
     title = "Skewness AFTER Yeo-Johnson Transformation",
-    subtitle = "Variables extending past the red lines stubbornly resisted the math",
+    subtitle = "Variables extending past the red lines",
     x = "Predictors",
     y = "New Skewness Value"
   ) +
@@ -318,7 +318,7 @@ train_data_unskewed |>
 # Load the required library
 library(tidyverse)
 
-# 1. Define the updated list of the 6 stubborn variables
+# Define the updated list of the 6 stubborn variables
 # (Ensure the spelling exactly matches your dataset column names)
 stubborn_vars <- c("MFR", "Filler_Speed", "Oxygen_Filler", "Temperature", "Air_Pressurer", "PSC_CO2")
 
@@ -433,6 +433,7 @@ print(rows_with_outliers)
 A 33.66% data loss is far too high; deleting one-third of the observations would significantly weaken the model's ability to learn and generalize.
 
 Interpretation of Stubborn Predictors
+
 Filler_Speed (17.06% Outliers): This high percentage confirms a multi-modal distribution. The "outliers" are likely the machine's actual operating speeds, while the majority of the data represents the machine being idle or in a secondary mode.
 
 MFR (9.27% Outliers): This follows a zero-inflated pattern. The boxplot is squashed because the process stays at a fixed baseline most of the time, making any actual production variance appear as a mathematical outlier.
@@ -445,7 +446,7 @@ Temperature (4.75% Outliers): Similar to Oxygen_Filler, this has a right-skewed 
 
 PSC_CO2 (3.00% Outliers): This shows a discontinuous pattern. There is a small group of rows where CO2 levels are significantly higher than the rest of the production run, creating a gap in the data.
 
-**Handling Strategy for Outliers**
+**Strategy for Handling Outliers**
 
 Since losing 33.66% of the data by deleting rows is unacceptable, the following "Soft Fix" approach from Chapter 3 is recommended:
 
@@ -453,102 +454,179 @@ Winsorizing (Capping): Set the values for all six variables to their 1st and 99t
 
 Spatial Sign Transformation: After capping, we apply the Spatial Sign. This projects the data onto a multidimensional sphere, ensuring that any remaining distance from the outliers doesn't overwhelm the model's loss function.
 
-Binary Indicator for Zero-Inflation: For Filler_Speed and MFR, we consider adding a new column (e.g., Is_Running) to help the model distinguish between "Off" and "Active" states more clearly than a skewed number can.
-
-==============
-
-**Centering and Scaling (Individual Predictor Transformations)**
-
-Centering: Subtracting the average (mean) of a predictor from all its values so that the new mean is zero.
-
-Scaling: Dividing each value by the standard deviation so that the new standard deviation is one.
-
-The Scale Problem: In the data, Filler_Speed is around 4,000, while PC_Volume is a small decimal like 0.27.
-
-Without scaling, a model might assume Filler_Speed is 10,000 times more important than PC_Volume just because the numbers are larger. Centering and scaling ensure every variable has the same weight in the model.
-
-Model Requirement: Many algorithms (like KNN, SVM, and Neural Networks) will perform poorly or even fail if the data isn't scaled.
-
-Applying this to the test data:
-
-We must use the Training Data's mean and standard deviation to transform the test data. This ensures the units remain consistent across both sets.
+Binary Indicator for Zero-Inflation: For Filler_Speed and MFR, we can consider adding a new column (e.g., Is_Running) to help the model distinguish between "Off" and "Active" states more clearly than a skewed number can.
 
 ```{r}
-# Load the caret library if not already loaded
-library(caret)
+# Define a robust capping function
+cap_outliers <- function(x) {
+  # Calculate the 1st and 99th percentiles
+  qnts <- quantile(x, probs = c(0.01, 0.99), na.rm = TRUE)
+  
+  # Replace values outside those bounds
+  x[x < qnts[1]] <- qnts[1]
+  x[x > qnts[2]] <- qnts[2]
+  return(x)
+}
 
-# calculate 'center' and 'scale' for all numeric columns.
-# It will automatically ignore categorical columns like 'Brand_Code' 
-# and we exclude the target 'PH' to keep it in its original units.
-scaling_plan <- preProcess(train_data_final[, names(train_data_final) != "PH"], 
-                           method = c("center", "scale"))
+# Define the list of stubborn variables
+stubborn_vars <- c("MFR", "Filler_Speed", "Oxygen_Filler", 
+                   "Temperature", "Air_Pressurer", "PSC_CO2")
 
-# Apply the transformation to create NEW variables
-# This ensures we don't overwrite your 'final' variables
-train_data_scaled <- predict(scaling_plan, train_data_final)
-test_data_scaled <- predict(scaling_plan, test_data_final)
+# Apply the cap to create a new dataset
+train_data_capped <- train_data_final |>
+  mutate(across(all_of(stubborn_vars), cap_outliers))
 
-# Verify the results
-# The means should now be 0 (or very close to it, e.g., 10^-16)
-# and the standard deviations should be exactly 1.
-# We check the first 5 columns as a sample:
-print("Means of scaled training data (first 5 columns):")
-colMeans(train_data_scaled[, sapply(train_data_scaled, is.numeric)][, 1:5], na.rm = TRUE)
-
-print("Standard Deviations of scaled training data (first 5 columns):")
-apply(train_data_scaled[, sapply(train_data_scaled, is.numeric)][, 1:5], 2, sd, na.rm = TRUE)
-
-# Check dimensions to ensure consistency
-cat("Train dimensions:", dim(train_data_scaled), "\n")
-cat("Test dimensions:", dim(test_data_scaled), "\n")
+# Apply the same logic to the test set 
+test_data_capped <- test_data_final |>
+  mutate(across(all_of(stubborn_vars), cap_outliers))
 ```
 
-**Scaling Visualization**
+**Visualizing the Impact of Capping**
 
-```{r message=FALSE, warning=FALSE}
-# Load visualization libraries
-library(ggplot2)
+```{r}
+library(tidyverse)
+library(e1071)
 library(gridExtra)
 
-# --- VISUALIZE BEFORE SCALING ---
-# Filler_Speed has a large range (thousands)
-p1_before <- ggplot(train_data_final, aes(x = Filler_Speed)) + 
-  geom_density(fill = "skyblue", alpha = 0.5) +
-  ggtitle("Before: Filler_Speed") +
-  xlab("Raw Units (~2500 to 5000)") +
+# 1. Prepare data for Skewness Comparison
+# Helper function to get skewness for the 6 stubborn variables
+calc_skew <- function(df, label) {
+  df |>
+    select(all_of(stubborn_vars)) |>
+    summarise(across(everything(), ~skewness(.x, na.rm = TRUE))) |>
+    pivot_longer(cols = everything(), names_to = "Predictor", values_to = "Skewness") |>
+    mutate(Version = label)
+}
+
+# Combine results
+skew_compare <- bind_rows(
+  calc_skew(train_data_final, "Original (Salmon)"),
+  calc_skew(train_data_capped, "Capped (Blue)")
+)
+
+# Plot 1: Skewness Bar Chart Comparison
+plot_skew <- ggplot(skew_compare, aes(x = reorder(Predictor, abs(Skewness)), y = Skewness, fill = Version)) +
+  geom_col(position = "dodge", color = "black", linewidth = 0.2) +
+  coord_flip() +
+  geom_hline(yintercept = c(-1, 1), linetype = "dashed", color = "red", linewidth = 1) +
+  scale_fill_manual(values = c("Original (Salmon)" = "salmon", "Capped (Blue)" = "skyblue")) +
+  labs(
+    title = "Impact of Capping on Skewness",
+    subtitle = "The Blue bars should be significantly shorter than the Salmon bars",
+    x = "Predictors", y = "Skewness Value"
+  ) +
   theme_minimal()
 
-# PC_Volume has a tiny range (decimals)
-p2_before <- ggplot(train_data_final, aes(x = PC_Volume)) + 
-  geom_density(fill = "salmon", alpha = 0.5) +
-  ggtitle("Before: PC_Volume") +
-  xlab("Raw Units (~0.1 to 0.5)") +
-  theme_minimal()
+# Plot 2: Boxplot Comparison (example: Oxygen_Filler)
+# This shows how the 'string of pearls' is handled
+boxplot_compare <- bind_rows(
+  train_data_final |> select(Oxygen_Filler) |> mutate(Version = "Original"),
+  train_data_capped |> select(Oxygen_Filler) |> mutate(Version = "Capped")
+) |>
+  ggplot(aes(x = Version, y = Oxygen_Filler, fill = Version)) +
+  geom_boxplot(outlier.color = "red") +
+  scale_fill_manual(values = c("Original" = "salmon", "Capped" = "skyblue")) +
+  labs(title = "Outlier Compression", subtitle = "Oxygen_Filler Before vs After") +
+  theme_minimal() + theme(legend.position = "none")
 
-# --- VISUALIZE AFTER SCALING ---
-# Now both will sit on the same X-axis range (roughly -3 to 3)
-p1_after <- ggplot(train_data_scaled, aes(x = Filler_Speed)) + 
-  geom_density(fill = "skyblue", alpha = 0.5) +
-  ggtitle("After: Filler_Speed (Scaled)") +
-  xlab("Standard Deviations from Mean") +
-  theme_minimal()
-
-p2_after <- ggplot(train_data_scaled, aes(x = PC_Volume)) + 
-  geom_density(fill = "salmon", alpha = 0.5) +
-  ggtitle("After: PC_Volume (Scaled)") +
-  xlab("Standard Deviations from Mean") +
-  theme_minimal()
-
-# Arrange all four plots in a 2x2 grid
-grid.arrange(p1_before, p2_before, p1_after, p2_after, ncol = 2)
+# Display both
+grid.arrange(plot_skew, boxplot_compare, ncol = 1)
 ```
-Interpretation:
+While Capping (Winsorizing) squashed the most extreme values, the Spatial Sign is the specialized tool suggested in the Kuhn & Johnson chapter 3 of Applied Predictive Modeling, designed to neutralize the remaining influence of those red dots (outliers).
 
-The chart uses two extreme variables—Filler_Speed (huge numbers) and PC_Volume (tiny decimals)—to visually demonstrate why data must be scaled. 
+Spatial Sign Transformation pulls every outlier toward the center of the data mass. It doesn't delete them; it just ensures they don't have enough weight to pull your model's predictions off-track.
 
-Before scaling, models get tricked into thinking variables with naturally larger numbers are more important. 
+For the Spatial Sign to work correctly, the data must be Centered and Scaled first otherwise the sphere will be skewed and the transformation will actually make your data worse.
 
-By centering the averages to 0 and scaling the spread to 1, both variables are mathematically forced onto the exact same playing field (ranging from roughly -3 to +3). 
+**Applying the Spatial Sign Transformation, Scaling and Centering**
 
-While the chart only displays two variables for clarity, this exact same balancing process was applied to all 32 numeric columns so the model can evaluate them fairly.
+```{r}
+library(caret)
+
+# We must include 'center' and 'scale' for 'spatialSign' to work
+spatial_plan <- preProcess(
+  train_data_capped |> select(-PH, -Brand_Code), 
+  method = c("center", "scale", "spatialSign")
+)
+
+# Apply the transformation to both datasets
+train_data_spatial <- predict(spatial_plan, train_data_capped)
+test_data_spatial <- predict(spatial_plan, test_data_capped)
+
+# Check the range of a stubborn variable
+# All values should now be between -1 and 1
+summary(train_data_spatial$Oxygen_Filler)
+
+```
+
+**Visual Proof of Outlier Neutralization**
+
+```{r}
+library(tidyverse)
+
+# 1. Gather the three versions of the data into one long format dataframe
+comparison_data <- bind_rows(
+  train_data_final   |> select(all_of(stubborn_vars)) |> mutate(Stage = "1. Original"),
+  train_data_capped  |> select(all_of(stubborn_vars)) |> mutate(Stage = "2. Capped"),
+  train_data_spatial |> select(all_of(stubborn_vars)) |> mutate(Stage = "3. Spatial Sign")
+) |>
+  pivot_longer(cols = -Stage, names_to = "Predictor", values_to = "Value") |>
+  mutate(Stage = factor(Stage, levels = c("1. Original", "2. Capped", "3. Spatial Sign")))
+
+# 2. Create the comparison visualization
+ggplot(comparison_data, aes(x = Stage, y = Value, fill = Stage)) +
+  geom_boxplot(outlier.color = "red", outlier.shape = 16, outlier.size = 1.2, alpha = 0.7) +
+  # Scales = "free_y" is critical because the Spatial Sign scale is much smaller (-1 to 1)
+  facet_wrap(~ Predictor, scales = "free_y", ncol = 3) +
+  scale_fill_manual(values = c(
+    "1. Original" = "salmon", 
+    "2. Capped" = "skyblue", 
+    "3. Spatial Sign" = "mediumpurple1"
+  )) +
+  labs(
+    title = "The Impact of Outlier Neutralization",
+    subtitle = "Observe how the red dots are pulled toward the center in Stage 3",
+    x = "",
+    y = "Calculated Value (Note the scale changes per stage)"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "none",
+    strip.text = element_text(face = "bold")
+  )
+```
+Stage 1: Original (The Danger Zone): Raw data contains outliers with massive vertical tails. These extreme values exert too much leverage, forcing the model to skew its logic just to accommodate a few rogue points.
+
+Stage 2: Capped (The Initial Taming): Applying Winsorization (99th percentile capping) pulls the extreme into a set boundary. This removes their excessive leverage while keeping the rows in the dataset.
+
+Stage 3: Spatial Sign (The Golden State): The data is projected onto a multidimensional sphere. This centers the variables and brings remaining outliers so they are mathematically close to the mean, ensuring they no longer have the weight to pull the model off track.
+
+
+Earlier we saw that removing rows with outliers would have cost us 33.66% of your data. 
+Missing values create a similar problem in modeling the data.
+
+If 10% of your rows have at least one NA, deleting those rows shrinks  training data significantly.
+By imputing, we keep all 2,567 rows, which gives the model more examples to learn from, making it more robust and accurate.
+
+```{r}
+head(train_data_spatial)
+```
+
+
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+
 
