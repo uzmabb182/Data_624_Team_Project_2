@@ -96,7 +96,7 @@ names(filtered_data)
 ```
 
 
-**Analysis od Dataset**
+**Analysis of Dataset**
 
 ```{r message=FALSE, warning=FALSE}
 # Checking the total number of missing values per column
@@ -176,4 +176,97 @@ dim(test_data_final)
 
 ```
 
+**Centering and Scaling (Individual Predictor Transformations)**
 
+Centering: Subtracting the average (mean) of a predictor from all its values so that the new mean is zero.
+
+Scaling: Dividing each value by the standard deviation so that the new standard deviation is one.
+
+The Scale Problem: In the data, Filler_Speed is around 4,000, while PC_Volume is a small decimal like 0.27.
+
+Without scaling, a model might assume Filler_Speed is 10,000 times more important than PC_Volume just because the numbers are larger. Centering and scaling ensure every variable has the same weight in the model.
+
+Model Requirement: Many algorithms (like KNN, SVM, and Neural Networks) will perform poorly or even fail if the data isn't scaled.
+
+Applying this to the test data:
+
+We must use the Training Data's mean and standard deviation to transform the test data. This ensures the units remain consistent across both sets.
+
+```{r}
+# Load the caret library if not already loaded
+library(caret)
+
+# calculate 'center' and 'scale' for all numeric columns.
+# It will automatically ignore categorical columns like 'Brand_Code' 
+# and we exclude the target 'PH' to keep it in its original units.
+scaling_plan <- preProcess(train_data_final[, names(train_data_final) != "PH"], 
+                           method = c("center", "scale"))
+
+# Apply the transformation to create NEW variables
+# This ensures we don't overwrite your 'final' variables
+train_data_scaled <- predict(scaling_plan, train_data_final)
+test_data_scaled <- predict(scaling_plan, test_data_final)
+
+# Verify the results
+# The means should now be 0 (or very close to it, e.g., 10^-16)
+# and the standard deviations should be exactly 1.
+# We check the first 5 columns as a sample:
+print("Means of scaled training data (first 5 columns):")
+colMeans(train_data_scaled[, sapply(train_data_scaled, is.numeric)][, 1:5], na.rm = TRUE)
+
+print("Standard Deviations of scaled training data (first 5 columns):")
+apply(train_data_scaled[, sapply(train_data_scaled, is.numeric)][, 1:5], 2, sd, na.rm = TRUE)
+
+# Check dimensions to ensure consistency
+cat("Train dimensions:", dim(train_data_scaled), "\n")
+cat("Test dimensions:", dim(test_data_scaled), "\n")
+```
+
+**Scaling Visualization**
+
+```{r message=FALSE, warning=FALSE}
+# Load visualization libraries
+library(ggplot2)
+library(gridExtra)
+
+# --- VISUALIZE BEFORE SCALING ---
+# Filler_Speed has a large range (thousands)
+p1_before <- ggplot(train_data_final, aes(x = Filler_Speed)) + 
+  geom_density(fill = "skyblue", alpha = 0.5) +
+  ggtitle("Before: Filler_Speed") +
+  xlab("Raw Units (~2500 to 5000)") +
+  theme_minimal()
+
+# PC_Volume has a tiny range (decimals)
+p2_before <- ggplot(train_data_final, aes(x = PC_Volume)) + 
+  geom_density(fill = "salmon", alpha = 0.5) +
+  ggtitle("Before: PC_Volume") +
+  xlab("Raw Units (~0.1 to 0.5)") +
+  theme_minimal()
+
+# --- VISUALIZE AFTER SCALING ---
+# Now both will sit on the same X-axis range (roughly -3 to 3)
+p1_after <- ggplot(train_data_scaled, aes(x = Filler_Speed)) + 
+  geom_density(fill = "skyblue", alpha = 0.5) +
+  ggtitle("After: Filler_Speed (Scaled)") +
+  xlab("Standard Deviations from Mean") +
+  theme_minimal()
+
+p2_after <- ggplot(train_data_scaled, aes(x = PC_Volume)) + 
+  geom_density(fill = "salmon", alpha = 0.5) +
+  ggtitle("After: PC_Volume (Scaled)") +
+  xlab("Standard Deviations from Mean") +
+  theme_minimal()
+
+# Arrange all four plots in a 2x2 grid
+grid.arrange(p1_before, p2_before, p1_after, p2_after, ncol = 2)
+```
+Interpretation:
+
+The chart uses two extreme variables—Filler_Speed (huge numbers) and PC_Volume (tiny decimals)—to visually demonstrate why data must be scaled. 
+
+Before scaling, models get tricked into thinking variables with naturally larger numbers are more important. 
+
+By centering the averages to 0 and scaling the spread to 1, both variables are mathematically forced onto the exact same playing field (ranging from roughly -3 to +3). 
+
+While the chart only displays two variables for clarity, this exact same balancing process was applied behind the scenes to all 32 numeric columns so your model can evaluate them fairly.
