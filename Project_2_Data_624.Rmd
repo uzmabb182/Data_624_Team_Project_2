@@ -56,6 +56,13 @@ skim(train_data)
 ```
 
 
+```{r}
+
+# View the structure and summary of the data
+str(train_data)
+summary(train_data)
+```
+
 **Target Variable (PH) Validation**
 
 First we examine the PH column in the training set and remove records that do not have an associated PH value.
@@ -88,6 +95,22 @@ names(filtered_data)
 ```
 
 
+**Analysis od Dataset**
+
+```{r message=FALSE, warning=FALSE}
+# Checking the total number of missing values per column
+missing_summary <- colSums(is.na(train_data))
+print(missing_summary[missing_summary > 0]) # Show only columns with NAs
+
+# Visualizing the missing patterns
+# install.packages("VIM")
+library(VIM)
+aggr(train_data, col=c('navyblue','red'), numbers=TRUE, sortVars=TRUE, 
+     labels=names(train_data), cex.axis=.7, gap=3, 
+     ylab=c("Histogram of missing data","Pattern"))
+```
+
+
 ```{r}
 head(filtered_data)
 ```
@@ -101,6 +124,16 @@ Frequency Ratio (freqCut): The ratio of the frequency of the most common value t
 Percent Unique (uniqueCut): The number of unique values divided by the total number of samples, multiplied by 100. The default threshold is 10%.
 
 A predictor is flagged for removal only if both the Frequency Ratio is greater than 19 and the Percent Unique is less than 10.
+
+**Identify Near-Zero Variance (NZV) Predictors**
+
+```{r}
+
+# 'saveMetrics = TRUE' provides the detailed math behind the decision
+nzv_analysis <- nearZeroVar(filtered_data, saveMetrics = TRUE)
+
+nzv_analysis
+```
 
 ```{r}
 
