@@ -221,21 +221,21 @@ train_data_final |>
   theme_minimal()
 ```
 
-The chart identifies which numeric predictors in dataset have a high skewness extending beyond the safe +/- 1 threshold (red lines), highlighting exactly which variables need a Box-Cox transformation to fix their skewed distributions.
+The chart identifies which numeric predictors in dataset have a high skewness extending beyond the safe +/- 1 threshold (red lines), highlighting exactly which variables using Yeo-Johnson instead of Box-Cox to fix skewed distributions.
 
 **Handle Skewness in Data**
 
 ```{r}
 library(caret)
 
-# 1. Create a pre-processing plan using Yeo-Johnson instead of Box-Cox
+# Create a pre-processing plan using Yeo-Johnson instead of Box-Cox
 # This will handle the zeros in variables like Filler_Speed and Mnf_Flow
 yj_plan <- preProcess(
   train_data_final[, !(names(train_data_final) %in% c("PH", "Brand_Code"))], 
   method = "YeoJohnson"
 )
 
-# 2. Apply the plan to fix the skewness
+# Apply the plan to fix the skewness
 train_data_unskewed <- predict(yj_plan, train_data_final)
 test_data_unskewed <- predict(yj_plan, test_data_final)
 
@@ -285,19 +285,19 @@ library(e1071)
 # Start the pipeline with the dataset AFTER the Yeo-Johnson transformation
 train_data_unskewed |>
   
-  # 1. Keep only the numeric columns
+  # Keep only the numeric columns
   select(where(is.numeric)) |>
   
-  # 2. Calculate the NEW skewness for every remaining column
+  # Calculate the NEW skewness for every remaining column
   summarise(across(everything(), ~skewness(.x, na.rm = TRUE))) |>
   
-  # 3. Reshape the data for plotting
+  # Reshape the data for plotting
   pivot_longer(cols = everything(), names_to = "Predictor", values_to = "Skewness") |>
   
-  # 4. Add the flag to identify which variables are STILL highly skewed
+  # Add the flag to identify which variables are STILL highly skewed
   mutate(Highly_Skewed = ifelse(abs(Skewness) > 1, "High Skew (Still)", "Acceptable Skew")) |>
   
-  # 5. Pipe into ggplot for the visualization
+  # Pipe into ggplot for the visualization
   ggplot(aes(x = reorder(Predictor, Skewness), y = Skewness, fill = Highly_Skewed)) +
   geom_col(color = "black", linewidth = 0.2) +
   coord_flip() + 
