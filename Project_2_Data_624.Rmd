@@ -223,6 +223,240 @@ train_data_final |>
 
 The chart identifies which numeric predictors in dataset have a high skewness extending beyond the safe +/- 1 threshold (red lines), highlighting exactly which variables need a Box-Cox transformation to fix their skewed distributions.
 
+**Handle Skewness in Data**
+
+```{r}
+library(caret)
+
+# 1. Create a pre-processing plan using Yeo-Johnson instead of Box-Cox
+# This will handle the zeros in variables like Filler_Speed and Mnf_Flow
+yj_plan <- preProcess(
+  train_data_final[, !(names(train_data_final) %in% c("PH", "Brand_Code"))], 
+  method = "YeoJohnson"
+)
+
+# 2. Apply the plan to fix the skewness
+train_data_unskewed <- predict(yj_plan, train_data_final)
+test_data_unskewed <- predict(yj_plan, test_data_final)
+
+# 3. Check the skewness again to verify it worked this time!
+library(tidyverse)
+library(e1071)
+
+train_data_unskewed |>
+  select(where(is.numeric)) |>
+  summarise(across(everything(), ~skewness(.x, na.rm = TRUE))) |>
+  pivot_longer(cols = everything(), names_to = "Predictor", values_to = "New_Skewness") |>
+  arrange(desc(abs(New_Skewness))) |>
+  head(10)
+```
+
+**Verify Skewness After Box-Cox**
+
+```{r}
+# Load required libraries
+library(tidyverse)
+library(e1071)
+
+# Check the skewness of the newly unskewed dataset
+train_data_unskewed |>
+  
+  # Keep only the numeric columns
+  select(where(is.numeric)) |>
+  
+  # Calculate skewness for every remaining column
+  summarise(across(everything(), ~skewness(.x, na.rm = TRUE))) |>
+  
+  # Reshape into a clean two-column table
+  pivot_longer(cols = everything(), names_to = "Predictor", values_to = "New_Skewness") |>
+  
+  # Sort by the highest absolute skewness to see the "worst" ones first
+  arrange(desc(abs(New_Skewness))) |>
+  
+  # Print the top 10 results
+  head(10)
+```
+
+```{r}
+# Load required libraries
+library(tidyverse)
+library(e1071)
+
+# Start the pipeline with the dataset AFTER the Yeo-Johnson transformation
+train_data_unskewed |>
+  
+  # 1. Keep only the numeric columns
+  select(where(is.numeric)) |>
+  
+  # 2. Calculate the NEW skewness for every remaining column
+  summarise(across(everything(), ~skewness(.x, na.rm = TRUE))) |>
+  
+  # 3. Reshape the data for plotting
+  pivot_longer(cols = everything(), names_to = "Predictor", values_to = "Skewness") |>
+  
+  # 4. Add the flag to identify which variables are STILL highly skewed
+  mutate(Highly_Skewed = ifelse(abs(Skewness) > 1, "High Skew (Still)", "Acceptable Skew")) |>
+  
+  # 5. Pipe into ggplot for the visualization
+  ggplot(aes(x = reorder(Predictor, Skewness), y = Skewness, fill = Highly_Skewed)) +
+  geom_col(color = "black", linewidth = 0.2) +
+  coord_flip() + 
+  scale_fill_manual(values = c("Acceptable Skew" = "skyblue", "High Skew (Still)" = "salmon")) +
+  
+  # Add the safe threshold lines
+  geom_hline(yintercept = c(-1, 1), linetype = "dashed", color = "red", linewidth = 1) +
+  
+  labs(
+    title = "Skewness AFTER Yeo-Johnson Transformation",
+    subtitle = "Variables extending past the red lines stubbornly resisted the math",
+    x = "Predictors",
+    y = "New Skewness Value"
+  ) +
+  theme_minimal()
+```
+```{r}
+# Load the required library
+library(tidyverse)
+
+# 1. Define the updated list of the 6 stubborn variables
+# (Ensure the spelling exactly matches your dataset column names)
+stubborn_vars <- c("MFR", "Filler_Speed", "Oxygen_Filler", "Temperature", "Air_Pressurer", "PSC_CO2")
+
+# 2. Build the pipeline to plot all six automatically
+train_data_final |>
+  
+  # Keep only these 6 specific columns
+  select(all_of(stubborn_vars)) |>
+  
+  # Reshape the data so ggplot can draw them all at once
+  pivot_longer(cols = everything(), names_to = "Predictor", values_to = "Raw_Value") |>
+  
+  # Pipe directly into the plot
+  ggplot(aes(x = Raw_Value)) +
+  geom_histogram(bins = 50, fill = "salmon", color = "black", alpha = 0.8) +
+  
+  # facet_wrap splits the plot into 6 separate panels
+  # 'scales = "free"' is critical here so each chart gets its own correct axis
+  facet_wrap(~ Predictor, scales = "free") +
+  
+  labs(
+    title = "Raw Distributions of the Top 6 Most Skewed Variables",
+    subtitle = "Diagnosing why mathematical transformations failed",
+    x = "Raw Values",
+    y = "Count of Rows"
+  ) +
+  theme_minimal()
+```
+**Visualizing Outliers for Stubborn Variables**
+
+```{r}
+# Load the required library
+library(tidyverse)
+
+# 1. Define the list of stubborn variables
+stubborn_vars <- c("MFR", "Filler_Speed", "Oxygen_Filler", "Temperature", "Air_Pressurer", "PSC_CO2")
+
+# 2. Build the pipeline for Boxplots
+train_data_final |>
+  # Select the variables
+  select(all_of(stubborn_vars)) |>
+  
+  # Reshape for ggplot
+  pivot_longer(cols = everything(), names_to = "Predictor", values_to = "Raw_Value") |>
+  
+  # Create the plot
+  ggplot(aes(x = Predictor, y = Raw_Value, fill = Predictor)) +
+  # geom_boxplot is the gold standard for outlier detection
+  geom_boxplot(outlier.color = "red", outlier.shape = 16, outlier.size = 2) +
+  
+  # Separate into individual panels for clarity
+  facet_wrap(~ Predictor, scales = "free") +
+  
+  labs(
+    title = "Outlier Detection for Stubborn Predictors",
+    subtitle = "Red dots represent potential outliers (values beyond 1.5 * IQR)",
+    x = "",
+    y = "Raw Value Range"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none") # Hide legend since facets are labeled
+```
+Interpretation:
+
+Zero-Inflated Predictors (MFR, Filler_Speed, Air_Pressurer): The data is concentrated at a single value (likely zero), causing the boxplots to appear flattened. Since these lack the necessary spread for mathematical transformations to work, they should be evaluated as Near-Zero Variance (NZV) predictors and either removed or converted into binary "On/Off" indicators.
+
+Heavy-Tailed Predictors (Oxygen_Filler, Temperature): These show a string of pearls pattern with many outliers extending upward. Because these extreme values pull the skewness calculation heavily to the right, handling involves Winsorizing (capping values at a specific percentile) or using a Spatial Sign Transformation to minimize outlier influence.
+
+Discontinuous Predictors (PSC_CO2): This variable shows a distinct set of outliers far above the main data cluster. Standard transformations fail to bridge this gap, so the best approach is to either treat the variable as a categorical factor or use tree-based models that are inherently robust to such gaps.
+
+
+```{r}
+library(tidyverse)
+
+# 1. Define the six stubborn variables
+stubborn_vars <- c("MFR", "Filler_Speed", "Oxygen_Filler", "Temperature", "Air_Pressurer", "PSC_CO2")
+
+# 2. Calculate outliers per column
+outlier_report <- train_data_final |>
+  select(all_of(stubborn_vars)) |>
+  pivot_longer(cols = everything(), names_to = "Predictor", values_to = "Value") |>
+  group_by(Predictor) |>
+  summarise(
+    Q1 = quantile(Value, 0.25, na.rm = TRUE),
+    Q3 = quantile(Value, 0.75, na.rm = TRUE),
+    IQR = Q3 - Q1,
+    Lower_Bound = Q1 - 1.5 * IQR,
+    Upper_Bound = Q3 + 1.5 * IQR,
+    Outlier_Count = sum(Value < Lower_Bound | Value > Upper_Bound, na.rm = TRUE),
+    Percent_Outliers = round((Outlier_Count / n()) * 100, 2)
+  )
+
+print("--- Outlier Count Per Predictor ---")
+print(outlier_report)
+
+# 3. Calculate the 'Total Impact' (Rows with at least one outlier)
+rows_with_outliers <- train_data_final |>
+  mutate(has_outlier = rowSums(across(all_of(stubborn_vars), function(x) {
+    q <- quantile(x, c(0.25, 0.75), na.rm = TRUE)
+    iqr <- q[2] - q[1]
+    x < (q[1] - 1.5 * iqr) | x > (q[2] + 1.5 * iqr)
+  }), na.rm = TRUE) > 0) |>
+  summarise(
+    Total_Impacted_Rows = sum(has_outlier),
+    Total_Rows_In_Dataset = n(),
+    Percent_Data_Loss = round((Total_Impacted_Rows / n()) * 100, 2)
+  )
+
+print("--- Total Impact on Dataset ---")
+print(rows_with_outliers)
+```
+A 33.66% data loss is far too high; deleting one-third of the observations would significantly weaken the model's ability to learn and generalize.
+
+Interpretation of Stubborn Predictors
+Filler_Speed (17.06% Outliers): This high percentage confirms a multi-modal distribution. The "outliers" are likely the machine's actual operating speeds, while the majority of the data represents the machine being idle or in a secondary mode.
+
+MFR (9.27% Outliers): This follows a zero-inflated pattern. The boxplot is squashed because the process stays at a fixed baseline most of the time, making any actual production variance appear as a mathematical outlier.
+
+Air_Pressurer (8.57% Outliers): This variable has a highly concentrated core. Because the normal operating range is extremely narrow, even standard, valid fluctuations are being flagged as red dots.
+
+Oxygen_Filler (7.25% Outliers): This represents a heavy-tailed distribution. There is a string of points extending toward higher values, which pulls the mean away from the median and creates persistent skewness.
+
+Temperature (4.75% Outliers): Similar to Oxygen_Filler, this has a right-skewed tail. While the percentage is lower, these extreme heat spikes can disproportionately influence linear model coefficients.
+
+PSC_CO2 (3.00% Outliers): This shows a discontinuous pattern. There is a small group of rows where CO2 levels are significantly higher than the rest of the production run, creating a gap in the data.
+
+**Handling Strategy for Outliers**
+
+Since losing 33.66% of the data by deleting rows is unacceptable, the following "Soft Fix" approach from Chapter 3 is recommended:
+
+Winsorizing (Capping): Set the values for all six variables to their 1st and 99th percentiles. This brings the extreme red dots to the edge of the acceptable range, neutralizing their negative impact on the model while keeping every single row of data.
+
+Spatial Sign Transformation: After capping, we apply the Spatial Sign. This projects the data onto a multidimensional sphere, ensuring that any remaining distance from the outliers doesn't overwhelm the model's loss function.
+
+Binary Indicator for Zero-Inflation: For Filler_Speed and MFR, we consider adding a new column (e.g., Is_Running) to help the model distinguish between "Off" and "Active" states more clearly than a skewed number can.
+
+==============
+
 **Centering and Scaling (Individual Predictor Transformations)**
 
 Centering: Subtracting the average (mean) of a predictor from all its values so that the new mean is zero.
