@@ -84,6 +84,7 @@ filtered_data <- train_data |>
 head(filtered_data)
 ```
 
+**Column Name Standardization**
 
 ```{r}
 # Replace all periods with underscores in the column names
@@ -160,6 +161,19 @@ colnames(filtered_data)[nzv_indices]
 
 
 ```{r}
+# Identifying which column index corresponds to the NZV predictor 
+# from our previous nzv_analysis object
+nzv_cols <- which(nzv_analysis$nzv == TRUE)
+
+# Removing the columns from train and test datasets
+
+train_data_final <- filtered_data[, -nzv_cols]
+test_data_final <- test_data[, -nzv_cols]
+
+# Verifying that the shapes match
+dim(train_data_final)
+dim(test_data_final)
+
 ```
 
 
