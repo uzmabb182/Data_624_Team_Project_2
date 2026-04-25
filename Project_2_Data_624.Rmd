@@ -44,9 +44,9 @@ test_data <- read.csv("https://raw.githubusercontent.com/uzmabb182/Data_624_Team
 
 ```
 
-=====================================================
-**Data Preparation (eg, imputation, transformations)**
-=====================================================
+=========================================================================
+**Data Preparation: Imputation, transformations, Encoding and Filtering**
+=========================================================================
 
 
 ```{r}
@@ -606,7 +606,7 @@ Stage 3: Spatial Sign (The Golden State): The data is projected onto a multidime
 Earlier we saw that removing rows with outliers would have cost us 33.66% of your data. 
 Missing values create a similar problem in modeling the data.
 
-If 10% of your rows have at least one NA, deleting those rows shrinks  training data significantly.
+If 10% of your rows have at least one NA, deleting those rows shrinks training data significantly.
 By imputing, we keep all 2,567 rows, which gives the model more examples to learn from, making it more robust and accurate.
 
 ```{r}
@@ -614,19 +614,178 @@ head(train_data_spatial)
 ```
 
 
-
+**Feature Engineering: Binary Flags for Zero-Inflation**
 
 ```{r}
+# We use the original data to identify 'True Zeros' before imputation fills them.
+# This explicitly tells the model when a machine was IDLE.
+train_data_spatial <- train_data_spatial |>
+  mutate(
+    MFR_Active = ifelse(train_data_final$MFR == 0, 0, 1),
+    Filler_Active = ifelse(train_data_final$Filler_Speed == 0, 0, 1),
+    Air_Pressurer_Active = ifelse(train_data_final$Air_Pressurer == 0, 0, 1)
+  )
+
+test_data_spatial <- test_data_spatial |>
+  mutate(
+    MFR_Active = ifelse(test_data_final$MFR == 0, 0, 1),
+    Filler_Active = ifelse(test_data_final$Filler_Speed == 0, 0, 1),
+    Air_Pressurer_Active = ifelse(test_data_final$Air_Pressurer == 0, 0, 1)
+  )
+
+#test_data_spatial
+```
+
+**Dealing with Missing Values (KNN Imputation)**
+
+```{r}
+# We fill the 208 gaps in MFR and others based on the 'neighborhood' of similar rows.
+# Note: knnImpute also centers and scales, but since we are already spatial-signed,
+# it will just focus on filling the holes.
+impute_proc <- preProcess(train_data_spatial |> select(-PH, -Brand_Code), method = "knnImpute")
+
+train_data_complete <- predict(impute_proc, train_data_spatial)
+test_data_complete  <- predict(impute_proc, test_data_spatial)
+
+# Verify: This should return 0
+cat("Total NAs remaining in Training Data:", sum(is.na(train_data_complete)), "\n")
 ```
 
 
+**The "Pre-Encoding" Check**
+
 ```{r}
+# Count total NAs in Brand_Code
+cat("Total NULLs in Brand_Code:", sum(is.na(train_data_complete$Brand_Code)), "\n")
+
+# View distribution including the NA count
+# 'useNA = "always"' ensures we see the Nulls as their own category
+table(train_data_complete$Brand_Code, useNA = "always")
+```
+The result shows that Brand_Code has 0 literal NULLs, but it does have 120 Hidden Nulls
+
+In R, empty strings ("") aren't technically NA, but for a predictive model, they are just as problematic. We need to handle those blanks before turning the brands into numeric columns.
+
+```{r}
+train_data_complete
+```
+
+**Resolving Blanks & Generating the Heatmap**
+
+```{r}
+# Resolve the 120 blanks in Brand_Code (before they become a dummy column)
+# We map the empty strings to Brand 'B' (the Mode)
+train_data_complete$Brand_Code[train_data_complete$Brand_Code == ""] <- "B"
+test_data_complete$Brand_Code[test_data_complete$Brand_Code == ""]   <- "B"
+
+# Re-run Dummy Encoding on the fixed Brand_Code
+dummies <- dummyVars(PH ~ ., data = train_data_complete)
+train_data_encoded <- as.data.frame(predict(dummies, newdata = train_data_complete))
+train_data_encoded$PH <- train_data_complete$PH
+
+# Calculate the Correlation Matrix (Excluding the target PH)
+# We use 'use = "pairwise.complete.obs"' as a safety measure
+cor_matrix <- cor(train_data_encoded |> select(-PH), use = "pairwise.complete.obs")
+
+# Handle any potential NAs in the correlation matrix 
+# We find columns that have 0 variance (constant columns)
+zero_var_cols <- which(apply(train_data_encoded |> select(-PH), 2, sd) == 0)
+if(length(zero_var_cols) > 0) {
+  train_data_encoded <- train_data_encoded[, -zero_var_cols]
+  cor_matrix <- cor(train_data_encoded |> select(-PH))
+}
+
+# Generate the Correlation Heatmap
+library(corrplot)
+corrplot(cor_matrix, 
+         method = "color", 
+         type = "upper", 
+         order = "hclust", # Groups redundant "twin" variables together
+         tl.col = "black", 
+         tl.srt = 45, 
+         tl.cex = 0.5,     # Smaller text to fit all predictors
+         title = "Predictor Multicollinearity: Before Filtering",
+         mar = c(0,0,1,0))
+```
+We could map those 120 blanks to a new label called "Unknown", however according to book: Applied Predictive Modeling chapter 3 by Kuhn & Johnson, if the number of missing values is small, simple imputation like the mode is preferred to avoid over-complicating the model with 'noise' categories.
+
+Interpretation:
+
+This heatmap serves as a health check for the dataset, specifically identifying Multicollinearity—where multiple sensors are effectively telling the model the same thing.
+
+The "Problem Clusters" The Liquid/Sugar Cluster (Bottom Right): There is a massive dark blue block where Density, Balling, Balling_Lvl, Carb_Volume, and Alch_Rel intersect.
+
+Interpretation: These variables are nearly identical (approx 0.95+). In beverage production, density and sugar content are mathematically linked. Including all of them would "confuse" a linear model, making your coefficients unstable.
+
+The Pressure Sync (Top Left): Carb_Pressure1, Fill_Pressure, and Pressure_Setpoint are highly correlated.
+
+Interpretation: The system is perfectly tuned; when the setpoint moves, the sensors follow. We likely only need one of these to represent the "pressure state" of the run.
+
+Brand Artifacts (Red Blocks): The dark red area (e.g., Brand_CodeB vs. Brand_CodeD) is a result of Dummy Encoding.
+
+Interpretation: Since a batch can only be one brand at a time, if it is "Brand B," it mathematically cannot be "Brand D," creating a strong negative correlation.
+
+The (White/Light Zones):
+
+Variables like Temperature, Oxygen_Filler, and Filler_Level are surrounded by white/light colors.
+
+Interpretation: These are Independent Predictors. They aren't twins with anything else, meaning they provide unique, high-value information that the model can't get from any other sensor.
+
+**Removing Redundant Predictors**
+
+```{r}
+
+# Identify the indices of variables to remove based on the 0.90 cutoff
+# 'cor_matrix' was created in your previous step
+high_cor_indices <- findCorrelation(cor_matrix, cutoff = 0.90)
+
+# Extract the names of the variables being dropped for your report
+vars_to_remove <- colnames(cor_matrix)[high_cor_indices]
+
+cat("Predictors identified for removal due to redundancy:\n")
+print(vars_to_remove)
+
+# Create the final, optimized datasets
+# Removing these columns from both the Training and Evaluation sets
+train_ready <- train_data_encoded |> select(-all_of(vars_to_remove))
+test_ready  <- test_data_encoded  |> select(-all_of(vars_to_remove))
+
+# Final Sanity Check
+cat("\nFinal Preparation Check:\n")
+cat("Total Rows in Training:", nrow(train_ready), "\n")
+cat("Total Predictors remaining:", ncol(train_ready) - 1, "\n") # -1 for the target PH
+cat("Remaining NULLs:", sum(is.na(train_ready)), "\n")
+
 ```
 
 
-```{r}
+```{r message=FALSE, warning=FALSE}
+# Check column counts
+cat("Train columns (including PH):", ncol(train_ready), "\n")
+cat("Test columns (Predictors only):", ncol(test_ready), "\n")
+
+# Check if the predictor names are identical and in the same order
+# We remove PH from train for a fair comparison
+predictor_match <- all(colnames(train_ready |> select(-PH)) == colnames(test_ready))
+cat("Do all predictors match perfectly?", predictor_match)
 ```
 
+```{r}
+#Get the names of the predictors that actually made it into your model
+# We remove 'PH' because the test set shouldn't have the answer key
+final_predictor_names <- colnames(train_ready |> select(-PH))
 
+# Force the test data to only keep THOSE specific columns
+# This automatically drops the 4 extra variables causing the mismatch
+test_ready_aligned <- test_ready |> 
+  select(all_of(final_predictor_names))
+
+# Final Verification Check
+cat("Train predictors:", length(final_predictor_names), "\n")
+cat("Test predictors:", ncol(test_ready_aligned), "\n")
+
+# This should now return TRUE
+all(colnames(train_ready |> select(-PH)) == colnames(test_ready_aligned))
+```
 
 
