@@ -150,7 +150,7 @@ nzv_indices <- nearZeroVar(filtered_data)
 train_data_cleaned <- filtered_data[, -nzv_indices]
 test_data_cleaned <- test_data[, -nzv_indices]
 
-# 3. Verify the change
+# Verify the change
 # Check how many columns were removed
 cat("Original number of columns:", ncol(filtered_data), "\n")
 cat("New number of columns:", ncol(train_data_cleaned), "\n")
@@ -353,10 +353,10 @@ train_data_final |>
 # Load the required library
 library(tidyverse)
 
-# 1. Define the list of stubborn variables
+#  Define the list of stubborn variables
 stubborn_vars <- c("MFR", "Filler_Speed", "Oxygen_Filler", "Temperature", "Air_Pressurer", "PSC_CO2")
 
-# 2. Build the pipeline for Boxplots
+# Build the pipeline for Boxplots
 train_data_final |>
   # Select the variables
   select(all_of(stubborn_vars)) |>
@@ -393,10 +393,10 @@ Discontinuous Predictors (PSC_CO2): This variable shows a distinct set of outlie
 ```{r}
 library(tidyverse)
 
-# 1. Define the six stubborn variables
+# Define the six stubborn variables
 stubborn_vars <- c("MFR", "Filler_Speed", "Oxygen_Filler", "Temperature", "Air_Pressurer", "PSC_CO2")
 
-# 2. Calculate outliers per column
+# Calculate outliers per column
 outlier_report <- train_data_final |>
   select(all_of(stubborn_vars)) |>
   pivot_longer(cols = everything(), names_to = "Predictor", values_to = "Value") |>
@@ -414,7 +414,7 @@ outlier_report <- train_data_final |>
 print("--- Outlier Count Per Predictor ---")
 print(outlier_report)
 
-# 3. Calculate the 'Total Impact' (Rows with at least one outlier)
+# Calculate the 'Total Impact' (Rows with at least one outlier)
 rows_with_outliers <- train_data_final |>
   mutate(has_outlier = rowSums(across(all_of(stubborn_vars), function(x) {
     q <- quantile(x, c(0.25, 0.75), na.rm = TRUE)
@@ -488,7 +488,7 @@ library(tidyverse)
 library(e1071)
 library(gridExtra)
 
-# 1. Prepare data for Skewness Comparison
+# Prepare data for Skewness Comparison
 # Helper function to get skewness for the 6 stubborn variables
 calc_skew <- function(df, label) {
   df |>
@@ -504,7 +504,7 @@ skew_compare <- bind_rows(
   calc_skew(train_data_capped, "Capped (Blue)")
 )
 
-# Plot 1: Skewness Bar Chart Comparison
+# Skewness Bar Chart Comparison
 plot_skew <- ggplot(skew_compare, aes(x = reorder(Predictor, abs(Skewness)), y = Skewness, fill = Version)) +
   geom_col(position = "dodge", color = "black", linewidth = 0.2) +
   coord_flip() +
@@ -517,7 +517,7 @@ plot_skew <- ggplot(skew_compare, aes(x = reorder(Predictor, abs(Skewness)), y =
   ) +
   theme_minimal()
 
-# Plot 2: Boxplot Comparison (example: Oxygen_Filler)
+# Boxplot Comparison (example: Oxygen_Filler)
 # This shows how the 'string of pearls' is handled
 boxplot_compare <- bind_rows(
   train_data_final |> select(Oxygen_Filler) |> mutate(Version = "Original"),
