@@ -28,7 +28,7 @@ test_data <- read.csv("https://raw.githubusercontent.com/uzmabb182/Data_624_Team
 
 
 #view(train_data)
-view(eval_data)
+#view(test_data)
 ```
 
 =====================================================
@@ -115,15 +115,11 @@ aggr(filtered_data, col=c('navyblue','red'), numbers=TRUE, sortVars=TRUE,
 head(filtered_data)
 ```
 
-In Applied Predictive Modeling by Kuhn & Johnson, the first step is the nearZeroVar function from the caret package.
+In Chapter 3 of Applied Predictive Modeling, the nearZeroVar function uses a strict two-part mathematical test to decide if a predictor is useless (NZV). A predictor is only marked TRUE if it satisfies both of these conditions:
 
-To identify Near-Zero Variance (NZV) predictors, the book defines two specific thresholds:
+The Frequency Ratio is > 19: This means the most common value appears at least 19 times more often than the second most common value.
 
-Frequency Ratio (freqCut): The ratio of the frequency of the most common value to the frequency of the second most common value. The default threshold is 19 (which represents a 95/5 split).
-
-Percent Unique (uniqueCut): The number of unique values divided by the total number of samples, multiplied by 100. The default threshold is 10%.
-
-A predictor is flagged for removal only if both the Frequency Ratio is greater than 19 and the Percent Unique is less than 10.
+The Percent Unique is < 10%: This means the number of unique values in the column is less than 10% of the total number of rows.
 
 **Identify Near-Zero Variance (NZV) Predictors**
 
@@ -134,9 +130,32 @@ nzv_analysis <- nearZeroVar(filtered_data, saveMetrics = TRUE)
 
 nzv_analysis
 ```
+When we look at the raw data for Hyd Pressure1, we can see exactly why it triggered both alarms:
+
+Frequency Ratio (~31.1): The value 0.0 appears 840 times. 
+Since 840 / 27 approx. 31.1, it far exceeds the imbalance threshold of 19 and this is below 10%. 
+This tells the algorithm that this variable is almost a constant zero.
+
+Consequence of not removing: removing Hyd Pressure1 because if you perform Resampling like Cross-Validation, there is a high statistical chance that in one of folds, that variable will become a constant 0 for every single row. If that happens, many models will crash because they cannot calculate a slope or weight for a column that never changes.
+
 
 ```{r}
+# Identify the indices of the predictors to remove
 
+nzv_indices <- nearZeroVar(filtered_data)
+
+# Remove these predictors from the TRAIN and TEST sets
+# Saving into NEW variables as requested
+train_data_cleaned <- filtered_data[, -nzv_indices]
+test_data_cleaned <- test_data[, -nzv_indices]
+
+# 3. Verify the change
+# Check how many columns were removed
+cat("Original number of columns:", ncol(filtered_data), "\n")
+cat("New number of columns:", ncol(train_data_cleaned), "\n")
+
+# View which column was removed
+colnames(filtered_data)[nzv_indices]
 ```
 
 
