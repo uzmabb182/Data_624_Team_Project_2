@@ -224,7 +224,7 @@ plot(train_data$Filler.Speed, train_data$PH,
      xlab = "Filler.Speed", ylab = "PH")
 ```
 
-**By creating a correlation table, we can see that Air.Pressure and Filler.Speed contain p values > 0.05, signifying no meaningful linear relationship with PH. Temperature has a weak negative correlation to PH with (r = -0.158) and can be considered removing as well.**
+**By creating a correlation table, we can see that Air.Pressure and Filler.Speed contain p values > 0.05, signifying no meaningful linear relationship with PH. Temperature has a weak negative correlation to PH with (r = -0.158). While the correlation table shows no meaningful linear relationship, it is not recommended to remove these predictors based on p-values alone, as it disregards non-linear patterns. Additionally, predictors can have meaningful interactions with other predictors to predict PH well. This correlation table is just to test the linear relationships the predictors have on PH and to inform the outlier detection process.**
 
 ```{r echo=FALSE}
 vars <- c("Temperature", "Air.Pressurer", "Filler.Speed")
@@ -323,7 +323,7 @@ for(var in vars) {
 wrap_plots(plots, ncol = 4)
 ```
 
-**We can additionally check MFR and Fill.Pressure for their correlation to PH as they exhibit vertical clustering. From the table, we can see that MFR has a p values > 0.05, signifying no meaningful linear relationship with PH. While Fill.Pressure's p-value is <0.05 and signifies correlation to PH.**
+**We can additionally check MFR and Fill.Pressure for their correlation to PH as they exhibit vertical clustering. From the table, we can see that MFR has a p values > 0.05, signifying no meaningful linear relationship with PH. While Fill.Pressure's p-value is < 0.05 and signifies linear correlation to PH.**
 
 ```{r echo=FALSE}
 vars <- c("MFR", "Fill.Pressure")
@@ -344,7 +344,7 @@ cor_table$P_Value <- format(cor_table$P_Value, scientific = TRUE)
 print(cor_table)
 ```
 
-**From analyzing the predictors with seemingly large number of outliers or extreme outliers, it should be noted that none of the tested predictors have a notable significance to the regression line of PH. Additionally, predictors such as MFR, Fill.Pressure, Temperature, Air.Pressure and Filler.Speed exhibits factor/category likeness, rather than numeric likeness and their range outliers most likely stem from the machine or factory setting. As such, it is recommended to apply robust estimators instead of mean/mode/mode transformations as it maintain their accuracy and reliability even when we have predictor variables that exhibit factor/category likeness.**
+**From analyzing the predictors with seemingly large number of outliers or extreme outliers, it should be noted that none of the tested predictors have a notable significance to PH. Additionally, predictors such as MFR, Fill.Pressure, Temperature, Air.Pressure and Filler.Speed exhibits factor/category likeness, rather than numeric likeness and their range outliers most likely stem from the machine or factory setting.**
 
 ## Analyzing Brand.Code
 
@@ -414,7 +414,7 @@ corrplot(cor_matrix_filtered,
          mar = c(0,0,2,0))
 ```
 
-**From the findCorrelation function, we can see that they match my analysis of the correlation plot, with the exception of density and Carb.Rel. This is likely due to density and carb.rel having an average correlation that is less than 85% with the other predictors. As such, it will not be a candidate for removal. However, the rest of the predictors: "Balling", "Hyd.Pressure3", "Alch.Rel", "Balling.Lvl", "Carb.Rel", "Filler.Level" and "Filler.Speed" is recommended.**
+**From the findCorrelation function, we can see that they match the analysis of the correlation plot, with the exception of Carb.Rel. This is likely due to carb.rel having an average correlation that is less than 85% with the other predictors. As such, it will not be a candidate for removal. However, the rest of the predictors: "Balling", "Hyd.Pressure3", "Alch.Rel", "Balling.Lvl", "Density", "Filler.Level" and "Filler.Speed" is recommended.**
 
 ```{r echo=FALSE}
 high_corr <- findCorrelation(cor_matrix, cutoff = 0.85, names = TRUE, exact = TRUE)
@@ -432,9 +432,13 @@ high_cor_pairs <- data.frame(
 
 ## Reccomendations from EDA
 
-- Predictors: `Balling`, `Hyd.Pressure3`, `Alch.Rel`, `Balling.Lvl`, `Filler.Level`,  and `Filler.Speed` suggested to be removed due to no significant correlation to target variable `PH`
-- Consider robust methods to dealing with the predictor outliers. Several predictors (`MFR`, `Fill.Pressure`, `Temperature`, `Air.Pressure`, `Filler.Speed`) show non-normal distributions and non/weak linear correlations with PH. In addition to exhibiting patterns as that of an ordinal categorical variable. This approach could be less sensitive to outliers and can capture non-linear patterns without requiring transformations
-- After removal of suggested predictors, it is recommended and suggested to use multiple imputation (such as missForest) on NAs. As it is flexible to our sample size of predictors. Since we also will be keeping our categorical variable, `Brand.Code`, missing forest is recommended as it allows for working with various kinds of continuous and categorical variables, creating a single completed data set by iteratively predicting missing values.
+- Predictors: `Balling`, `Hyd.Pressure3`, `Alch.Rel`, `Balling.Lvl`, `Density`,`Filler.Level`, and `Filler.Speed` are suggested to be removed due to no significant correlation to other predictors.
+- Consider robust methods or tree-based models over standard linear regression when dealing with the predictor outliers. Several predictors (`MFR`, `Fill.Pressure`, `Temperature`, `Air.Pressure`, `Filler.Speed`) show non-normal distributions and non/weak linear correlations with PH. In addition to exhibiting patterns as that of an ordinal categorical variable. This approach could be less sensitive to outliers and can capture non-linear patterns without requiring transformations.
+- After removal of suggested predictors, it is recommended to use multiple imputation (such as missForest) on NAs. As it is flexible to our sample size of predictors. Since we also will be keeping our categorical variable, `Brand.Code`, missForest allows for working with various kinds of continuous and categorical variables, creating a single completed data set by iteratively predicting missing values.
+- Consider standardization and normalization of predictors in the model building process due to as predictors exhibit bimodal and skewed distribution.
+
+**Note: Brand.Code most likely represents different beverage types or formulations, not only a minor change/variation. Additionally, beverages for PH are not typically above 9. Any beverage above that PH can be considered alkaline and are unusual, but they do exist.**
+
 
 =========================================================================
 **Data Preparation: Imputation, transformations, Encoding and Filtering**
