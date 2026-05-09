@@ -1,6 +1,6 @@
 ---
 title: "Project_2_Data_624"
-author: "Jackie Yee, Mubashira Qari, Farhod Ibragimov, Alexander Simon"
+author: "Farhod Ibragimov, Alexander Simon, Jackie Yee, Mubashira Qari"
 date: "2026-04-18"
 output:
   html_document:
@@ -10,13 +10,9 @@ output:
     toc: true
 ---
 
-As the data science team at ABC Beverage, we are tasked to provide analysis of the company's manufacturing process, the predictive factors and our predictive model of PH to meet compliance of the new regulations. 
+**As the data science team at ABC Beverage, we are tasked to provide analysis of the company's manufacturing process, the predictive factors and our predictive model of PH to meet compliance of the new regulations.**
 
-=====================================================
-**Loading Datasets**
-=====================================================
-
-```{r message=FALSE, warning=FALSE}
+```{r message=FALSE, warning=FALSE, include=FALSE}
 
 # Load libraries
 library(tidyverse)
@@ -29,6 +25,12 @@ library(corrplot) # corelation plot
 library(ggplot2)
 library(tidyr)
 library(patchwork)
+library(kableExtra)
+library(naniar)
+library(psych)
+library(dplyr)
+library(rstatix)
+library(mice)
 
 # Load the datasets
 train_data <- read.csv("https://raw.githubusercontent.com/uzmabb182/Data_624_Team_Project_2/refs/heads/main/StudentData.csv", stringsAsFactors = FALSE)
@@ -37,73 +39,95 @@ test_data <- read.csv("https://raw.githubusercontent.com/uzmabb182/Data_624_Team
 
 ```
 
-=====================================================
-**Data Exploration (EDA)**
-=====================================================
 
-# We can begin by conducting a summary statistic of our data.
+# Exploratory Data Analysis
 
-**From the summary statistic, we can see that there is 1 categorical variable Brand.Code, our target variable PH, and 31 predictor variables. Additionally, we can see that many of these predictor variables contain NAs, so we can start by examining if these NAs contain any patterns.**
+## Summary Statistics
+**From the summary statistic, we can see that there is 1 categorical variable Brand.Code, our target variable PH, and 31 predictor variables. Additionally, we can see that many of these predictor variables and Brand.Code contain NAs. Notably, in Brand.Code, approximately 48% were categorized into B making the most frequent brand code.**
+
+```{r echo=FALSE}
+cat_summary <- train_data %>%
+  count(Brand.Code) %>%
+  mutate(
+    Percentage = round(n / sum(n) * 100, 2)
+  ) %>%
+  rename(
+    "Brand Code" = Brand.Code,
+    "Frequency" = n,
+    "Percent" = Percentage
+  )
+
+cat_summary %>%
+  kable(caption = "Descriptive Stats Brand.Code") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+numeric_vars <- train_data %>% select(where(is.numeric))
+
+num_summary <- describe(numeric_vars) %>%
+  rownames_to_column("Variable") %>%
+  mutate(NA_Count = sapply(numeric_vars, function(x) sum(is.na(x)))) %>%
+  select(Variable, n,  mean, sd, median, min, max, NA_Count) %>%
+  mutate(across(where(is.numeric), ~ round(., 2))) %>%
+  rename(
+    "Count" = n,
+    "Mean" = mean,
+    "Std Dev" = sd,
+    "Median" = median,
+    "Min" = min,
+    "Max" = max,
+    "NA's" = NA_Count
+  )
+
+num_summary %>%
+  kable(caption = "Descriptive Stats Numeric Predictors") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+
+#summary(train_data)
 
 
-```{r}
-summary(train_data)
 ```
 
-**From the summary statistic, we can see that there contains many NAs throughout the variables. To check if there is a pattern to these NAs, we can begin with an UpSet plot to visualize any patterns or relationships that may need to be preserved. In the UpSet plot below, there exhibits zero to no noticeable patterns in the missing values, which informs us that removal of these NAs is a possibility.**
+## Duplicated Rows Check and NAs check
+
+**We check for any duplicated rows in the train data through the duplicated function. This is to inform us if any duplicated data needs to be handled with appropriately. From the output, we can see that there is no duplicated data. So, next we can begin to check for the percentage of missing data in our dataset, so that we can begin uncovering any patterns related to the missingness.**
 
 ```{r}
-na_matrix <- train_data %>%
-  select(where(~any(is.na(.)))) %>%
-  mutate(across(everything(), ~ifelse(is.na(.), 1, 0)))
-
-upset(as.data.frame(na_matrix), 
-      nsets = 10,
-      nintersects = 15,
-      order.by = "freq",
-      keep.order = TRUE,
-      mainbar.y.label = "Rows with Missing Pattern",
-      sets.x.label = "Missing Vals per Var",
-      point.size = 3,
-      line.size = 1.2,
-      main.bar.color = "#b19cd9",
-      sets.bar.color = "#9370db",
-      text.scale = 1.3,
-      mb.ratio = c(0.6, 0.4),
-      matrix.color = "#483d8b",
-      shade.color = "lightgray")
-
+sum(duplicated(train_data))
 ```
 
-**Yet before considering removal of these NAs, we want to check for the proportion of NAs in each predictor. This is to tell us whether or not mean/median/knn imputation as a viable strategy or to remove them. From the bar chart of the NA proportion, we can see that though MFR has a missingness of 8.2%, other predictors have missingness < 2.5%. So we can consider in the data preparation process to impute these predictors with the mean/median or to remove the NAs as is.**
+**From the summary statistic, we can see that there contains many NAs throughout the variables. To check if there is a pattern to these NAs, we can begin by using the [vis_miss() function from the naniar library](https://www.r-bloggers.com/2025/08/handling-missing-data-in-r-a-comprehensive-guide/) to visualize any patterns or relationships that may need to be preserved. In the plot below, we observed that around 1% of the data contains NAs or missing data. 8% of the missing data being from MFR. Other predictors have missingness < 2.5%. Before we can begin to outline with imputation technique to ultilize in dealing with the missing data, we need to look at which predictors correlate to PH through visual analysis.**
 
-```{r}
-na_prop <- train_data %>%
-  summarise(across(everything(), ~mean(is.na(.)))) %>%
-  pivot_longer(everything(), names_to = "variable", values_to = "na_proportion")
+```{r echo=FALSE}
+vis_miss(train_data) + 
+  coord_flip() 
+```
 
-ggplot(na_prop, aes(x = reorder(variable, na_proportion), y = na_proportion)) +
-  geom_bar(stat = "identity", aes(fill = na_proportion), show.legend = FALSE) +
-  scale_fill_gradient(low = "lightblue", high = "darkred") +
-  geom_text(aes(label = scales::percent(na_proportion, accuracy = 0.1)), 
-            hjust = -0.1, size = 3) +
-  coord_flip() +
-  theme_minimal(base_size = 12) +
-  theme(panel.grid.major.y = element_blank(),
-        panel.grid.minor = element_blank(),
-        axis.text = element_text(color = "black")) +
-  labs(title = "% of Missing Values by Variable",
-       x = "", 
-       y = "") +
-  scale_y_continuous(labels = scales::percent, limits = c(0, max(na_prop$na_proportion) * 1.1))
+```{r eval=FALSE, include=FALSE}
+#na_prop <- train_data %>%
+#  summarise(across(everything(), ~mean(is.na(.)))) %>%
+#  pivot_longer(everything(), names_to = "variable", values_to = "na_proportion")
+
+#ggplot(na_prop, aes(x = reorder(variable, na_proportion), y = na_proportion)) +
+#  geom_bar(stat = "identity", aes(fill = na_proportion), show.legend = FALSE) +
+#  scale_fill_gradient(low = "lightblue", high = "darkred") +
+#  geom_text(aes(label = scales::percent(na_proportion, accuracy = 0.1)), 
+#            hjust = -0.1, size = 3) +
+#  coord_flip() +
+#  theme_minimal(base_size = 12) +
+#  theme(panel.grid.major.y = element_blank(),
+#        panel.grid.minor = element_blank(),
+#        axis.text = element_text(color = "black")) +
+#  labs(title = "% of Missing Values by Variable",
+#       x = "", 
+#       y = "") +
+#  scale_y_continuous(labels = scales::percent, limits = c(0, max(na_prop$na_proportion) * 1.1))
 ```
 
 
-# Checking distribution of the predictors
+## Analyzing the Distribution of Predictors
 
-**Next, we check for skewness of our data. In the histogram below, our target variable PH is considerable normal. In addition, we can see that there are many ranges of distributions in our histogram of the numeric predictors as some were normal, some were bi-modal and some were skewed. Because of so, we should consider standardization and normalization of predictors in our model building process.**
+**In the histogram below, our target variable PH is considerably normal. In addition, we can see that there are many ranges of distributions in our histogram of the numeric predictors as some were normal, some were bi-modal and some were skewed. Because of so, we should consider standardization and normalization of predictors in our model building process.**
 
-```{r}
+```{r echo=FALSE, message=FALSE, warning=FALSE}
 #histogram
 train_data %>%
   select(where(is.numeric)) %>%
@@ -114,11 +138,11 @@ train_data %>%
   theme_minimal()
 ```
 
-**Additionally, we check for outliers in the predictors through the box plot below. It is notable that Filler.Speed, Temperature, MFR, Oxygen.Filler, Air.Pressurer, PSC among other predictors exhibit a high number of outliers and should be treated through capping (winsorize) at 1st/99th percentile for linear models.**
+**Additionally, we check for outliers in the predictors through the box plot below.** 
 
-```{r message=FALSE, warning=FALSE}
+```{r echo=FALSE, message=FALSE, warning=FALSE}
 all_numeric <- train_data %>%
-  select(where(is.numeric)) %>%
+  select(where(is.numeric), -PH) %>%
   pivot_longer(everything(), names_to = "variable", values_to = "value")
 
 var_list <- unique(all_numeric$variable)
@@ -126,37 +150,254 @@ plots <- list()
 
 for(i in seq_along(var_list)) {
   plots[[i]] <- ggplot(all_numeric %>% filter(variable == var_list[i]), 
-                       aes(x = value)) +
+                       aes(x = variable, y = value)) +
     geom_boxplot(fill = "#b19cd9", color = "#483d8b", alpha = 0.7,
                  outlier.color = "darkred", outlier.size = 0.8) +
     labs(title = var_list[i], x = "", y = "") +
     theme_minimal(base_size = 8) +
     theme(plot.title = element_text(size = 9, hjust = 0.5),
-          axis.text.x = element_text(angle = 45, hjust = 1))
+          axis.text.x = element_blank(),
+          axis.ticks.x = element_blank())
+}
+
+wrap_plots(plots, ncol = 5)
+```
+
+**It is notable that Fill.Ounces, PC.Volume, PSC, Carb.Pressure1, Fill.Pressure, Temperature, MFR, Oxygen.Filler, Air.Pressurer, Filler.Speed contain a large number of outliers mostly skewed, so we will check if these variables have real impact on the target variable PH.**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+all_numeric <- train_data %>%
+  select(where(is.numeric)) %>%
+  pivot_longer(everything(), names_to = "variable", values_to = "value")
+
+#predictors with high num of outliers
+selected_vars <- c("Fill.Ounces", "PC.Volume", "PSC", "Carb.Pressure1", 
+                   "Fill.Pressure", "Temperature", "MFR", "Oxygen.Filler", "Air.Pressurer", "Filler.Speed")
+
+plots <- list()
+
+for(i in seq_along(selected_vars)) {
+  var <- selected_vars[i]
+  plot_data <- all_numeric %>% filter(variable == var)
+  
+  plots[[i]] <- ggplot(plot_data, aes(x = variable, y = value)) +
+    geom_boxplot(fill = "#b19cd9", color = "#483d8b", alpha = 0.7,
+                 outlier.color = "darkred", outlier.size = 0.8) +
+    labs(title = var, x = "", y = "") +
+    theme_minimal(base_size = 8) +
+    theme(plot.title = element_text(size = 9, hjust = 0.5),
+          axis.text.x = element_blank(),
+          axis.ticks.x = element_blank())
+}
+
+wrap_plots(plots, ncol = 3)
+```
+
+**Upon closer inspection, the predictor variables from the scatter plot below reveals many things in relation to the PH, but first, let's take a look at the predictors Temperature, Air.Pressurer and Filler.Speed.**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=TRUE}
+for(i in seq_along(selected_vars)) {
+  var <- selected_vars[i]
+  
+  plots[[i]] <- ggplot(train_data, aes(x = .data[[var]], y = PH)) +
+    geom_point(alpha = 0.4, size = 1) +
+    geom_smooth(method = "lm", se = FALSE, color = "darkred") +
+    theme_minimal(base_size = 8) +
+    labs(title = var, x = "", y = "PH") +
+    theme(plot.title = element_text(size = 9, hjust = 0.5))
+}
+
+wrap_plots(plots, ncol = 3)
+```
+
+**In the individual scatter plot of Temperature, Air.Pressurer and Filler.Speed, they show that they act more like a factor/category than numeric. For these predictors, it could possibly be controlled by a discrete machine or factory setting. For Filler.Speed, the outliers scattered can be presumed to be from the machine alternating between 1000 and 4000. Since these predictors form vertical bands, it is suggested that they don't have high correlation to the PH. However, we can create a correlation table between these predictors and our target variable to verify.**
+
+```{r echo=FALSE}
+plot(train_data$Temperature, train_data$PH,
+     main = "Temperature vs PH", 
+     xlab = "Temperature", ylab = "PH")
+plot(train_data$Air.Pressurer, train_data$PH, 
+     main = "Air.Pressurer vs PH", 
+     xlab = "Air.Pressurer", ylab = "PH")
+plot(train_data$Filler.Speed, train_data$PH, 
+     main = "Filler.Speed vs PH", 
+     xlab = "Filler.Speed", ylab = "PH")
+```
+
+**By creating a correlation table, we can see that Air.Pressure and Filler.Speed contain p values > 0.05, signifying no meaningful linear relationship with PH. Temperature has a weak negative correlation to PH with (r = -0.158) and can be considered removing as well.**
+
+```{r echo=FALSE}
+vars <- c("Temperature", "Air.Pressurer", "Filler.Speed")
+
+cor_table <- data.frame()
+
+for(var in vars) {
+  test <- cor.test(train_data[[var]], train_data$PH, use = "complete.obs")
+  cor_table <- rbind(cor_table, data.frame(
+    Variable = var,
+    Correlation = round(test$estimate, 3),
+    P_Value = test$p.value,
+    Significant = ifelse(test$p.value < 0.05, "Yes", "No")
+  ))
+}
+
+cor_table$P_Value <- format(cor_table$P_Value, scientific = TRUE)
+print(cor_table)
+```
+
+**Afterwards, we can begin to do more analysis of the predictors left: Temperature, Fill.Ounces, PC.Volume, PSC, Carb.Pressure1, Oxygen.Filler, MFR and Fill.Pressure. We will use the [IQR rule](https://www.r-bloggers.com/2025/12/outliers-in-data-analysis-detecting-extreme-values-before-modeling-in-r-with-istanbul-airbnb-data/) for detecting outliers outside the IQR range (Q1 - 1.5 * IQR AND Q3 + 1.5 * IQR).**
+
+**From the graph, we see:**
+- `Fill.Ounces`, `PC.Volume`, `PSC`, `Carb.Pressure1` and `Fill.Pressure` have outliers that aren't extremely far from the IQR.
+- `Oxygen.Filler`, `MFR` and `Temperature` suggests extreme outliers.
+
+**From our previous observations, we noted that Temperature acts more like a factor/category than numeric predictor.**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+vars <- c("Fill.Ounces", "PC.Volume", "PSC", "Carb.Pressure1", "Oxygen.Filler", "MFR", "Fill.Pressure", "Temperature")
+
+plots <- list()
+
+for(var in vars) {
+  #iqr
+  Q1 <- quantile(train_data[[var]], 0.25, na.rm = TRUE)
+  Q3 <- quantile(train_data[[var]], 0.75, na.rm = TRUE)
+  IQR <- Q3 - Q1
+  lower <- Q1 - 1.5 * IQR
+  upper <- Q3 + 1.5 * IQR
+  
+  #flagging the outliers
+  plot_data <- train_data %>%
+    mutate(is_outlier = train_data[[var]] < lower | train_data[[var]] > upper,
+           outlier_color = ifelse(is_outlier, "Outlier", "Normal"))
+  
+  p <- ggplot(plot_data, aes(x = .data[[var]], y = PH, color = outlier_color)) +
+    geom_point(alpha = 0.6, size = 1) +
+    geom_smooth(method = "lm", color = "#000000", se = FALSE, size = 0.8) + 
+    scale_color_manual(values = c("Normal" = "#b19cd9", "Outlier" = "darkred")) +
+    theme_minimal(base_size = 8) +
+    theme(legend.position = "none",
+          plot.title = element_text(size = 9, hjust = 0.5)) +
+    labs(title = var, x = "", y = "PH")
+  
+  plots[[var]] <- p
 }
 
 wrap_plots(plots, ncol = 4)
 ```
 
-**Afterwards, we can check if the categorical variable Brand.Code has any significant predictive effects on the target variable PH. This is to inform us whether we should keep our categorical variable or not. To do so, we can conduct a chi-square test for association of the categorical target. Because the p-value of Brand.Code is < 0.05, there is a statistically significant association between Brand.Code and PH. Additionally, there is a large deviation from independence as X-squared = 703.07 and the df = 204 which tells us that many categories influences the PH levels. In this regard, we should consider thinking about the practical significance through Cramer's V analysis.**
+**The above scatterplot has overplotting issues due to the data points clustering in a cloud-like formation, so we decided on randomly sampling 500 rows of the dataset to reduce this issue. From the randomly sampled scatter plot of the predictors, we can see that:**
+- `MFR` and `Fill.Pressure` exhibits factor/category likeness, rather than numeric likeness. Distribution across the PH regression line suggestions no to weak correlation.
+- `Fill.Ounces`, `PC.Volume`, `PSC`, `Carb.Pressure1` and `Oxygen.Filler` points on the scatterplot exhibit weak/no relationship to the regression line of PH.
 
-```{r warning=FALSE}
-chisq.test(table(train_data$Brand.Code, train_data$PH))
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+set.seed(5555)
+sample_data <- train_data %>% sample_n(500)
+
+plots <- list()
+
+for(var in vars) {
+  Q1 <- quantile(train_data[[var]], 0.25, na.rm = TRUE)
+  Q3 <- quantile(train_data[[var]], 0.75, na.rm = TRUE)
+  IQR <- Q3 - Q1
+  lower <- Q1 - 1.5 * IQR
+  upper <- Q3 + 1.5 * IQR
+  
+  plot_data <- sample_data %>%
+    mutate(is_outlier = sample_data[[var]] < lower | sample_data[[var]] > upper,
+           outlier_color = ifelse(is_outlier, "Outlier", "Normal"))
+  
+  p <- ggplot(plot_data, aes(x = .data[[var]], y = PH, color = outlier_color)) +
+    geom_point(alpha = 0.6, size = 1) +
+    geom_smooth(method = "lm", color = "darkred", se = FALSE, size = 1) +
+    scale_color_manual(values = c("Normal" = "#b19cd9", "Outlier" = "darkred")) +
+    theme_minimal(base_size = 8) +
+    theme(legend.position = "none",
+          plot.title = element_text(size = 9, hjust = 0.5)) +
+    labs(title = var, x = "", y = "PH")
+  
+  plots[[var]] <- p
+}
+
+wrap_plots(plots, ncol = 4)
 ```
 
-**Since the Cramer V value betwen Brand.Code and PH are 0.262, it indicates a small to medium significance between the variables as expected from the large sample. However, because the influence is modest at best, it can be either kept alongside the stronger predictor variables or removed if the model needs to be simplified or dimensionality should be reduced.**
+**We can additionally check MFR and Fill.Pressure for their correlation to PH as they exhibit vertical clustering. From the table, we can see that MFR has a p values > 0.05, signifying no meaningful linear relationship with PH. While Fill.Pressure's p-value is <0.05 and signifies correlation to PH.**
 
+```{r echo=FALSE}
+vars <- c("MFR", "Fill.Pressure")
 
-```{r}
-cramerV(table(train_data$Brand.Code, train_data$PH))
+cor_table <- data.frame()
+
+for(var in vars) {
+  test <- cor.test(train_data[[var]], train_data$PH, use = "complete.obs")
+  cor_table <- rbind(cor_table, data.frame(
+    Variable = var,
+    Correlation = round(test$estimate, 3),
+    P_Value = test$p.value,
+    Significant = ifelse(test$p.value < 0.05, "Yes", "No")
+  ))
+}
+
+cor_table$P_Value <- format(cor_table$P_Value, scientific = TRUE)
+print(cor_table)
 ```
 
-# Analyzing Variable Correlations
+**From analyzing the predictors with seemingly large number of outliers or extreme outliers, it should be noted that none of the tested predictors have a notable significance to the regression line of PH. Additionally, predictors such as MFR, Fill.Pressure, Temperature, Air.Pressure and Filler.Speed exhibits factor/category likeness, rather than numeric likeness and their range outliers most likely stem from the machine or factory setting. As such, it is recommended to apply robust estimators instead of mean/mode/mode transformations as it maintain their accuracy and reliability even when we have predictor variables that exhibit factor/category likeness.**
 
-**After checking the distribution of the predictors, we can start analyzing the relationships of the variables. Through the correlation plot below, we can see that variables such as Hy.Pressure3, Filler.Level, Filler.Speed, Density, Balling, Alch.Rel and Carb.Rel have correlations > 85%. Before we remove the variables, however, we can use the function findCorrelation() to match our correlation plot.**
+## Analyzing Brand.Code
 
-```{r}
-numeric_data <- train_data %>% select(where(is.numeric))
+**Afterwards, we can check if the categorical variable Brand.Code has any significant predictive effects on the target variable PH. This is to inform us whether we should keep our categorical variable or not. Through the boxplot, we can see that each brand (including NAs) have varying median lines, indicating that they are different types of beverages that potentially come from various manufacturing processes. Interestingly, the NAs Brand.Code distribution ties closely to the distribution of all over brand.codes.**
+
+
+```{r echo=FALSE}
+boxplot(PH ~ Brand.Code, data = train_data, 
+        las = 2, xlab = "Brand Code", ylab = "PH", 
+        main = "PH Distribution by Brand Code")
+```
+
+**Let's confirm that each brand has a statistically different PH distribution from every other brand through a [mann-Whitney U test](https://www.statology.org/mann-whitney-u-test/). As shown below, we can see that each pairwise comparison of Brand.Code has a statistically significant pH value (all p-values < 0.05 after [Bonferroni correction](https://www.statology.org/bonferroni-correction/)), indicting that the brands represent different beverage types or formulations, not only a minor change/variation.**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#mann-Whitney U test pairwise comparisons, labeled brand.code nas as missing
+ph_by_brand <- train_data %>%
+  mutate(Brand.Code = forcats::fct_na_value_to_level(Brand.Code, "Missing"))
+
+#https://www.statology.org/bonferroni-correction/
+#pairwise Mann-Whitney U test with bonferroni
+#in Bonferroni correction each raw p-value is multiplied by ( m ) (compare each p-value to (\alpha/m)).
+#ensures strong control of the family-wise error rate.
+pairwise_results <- pairwise.wilcox.test(
+  ph_by_brand$PH, 
+  ph_by_brand$Brand.Code,
+  p.adjust.method = "bonferroni",
+  paired = FALSE
+)
+
+print(pairwise_results)
+```
+
+**From an ANOVA test of the Brand.Code to see the effects of Brand.Code on PH, we can see that p < 2e-16, signifying it as highly significant. Additionally, Brand.Code explains 11.7% of the variance in PH. Because of this, we decided to keep Brand.Code.**
+
+```{r echo=FALSE}
+aov_result <- aov(PH ~ Brand.Code, data = train_data)
+summary(aov_result)
+
+ss <- summary(aov_result)[[1]]$"Sum Sq"
+r_sq <- ss[1] / sum(ss)
+#variance by brand.code
+round(r_sq * 100, 2)
+```
+
+## Analyzing Variable Correlations
+
+**Before we begin to check the correlation of predictors, it is important to exclude PH from the training data so that it doesn't affect any of the predictor correlations. After doing so, we can start analyzing the relationships of the variables. Through the correlation plot below, we can see that variables such as Hy.Pressure3, Filler.Level, Filler.Speed, Density, Balling, Alch.Rel and Carb.Rel have correlations > 85%. Before we remove the variables, however, we can use the function findCorrelation() to match our correlation plot.**
+
+```{r echo=FALSE}
+#excludingPH from numeric data
+numeric_data <- train_data %>% 
+  select(where(is.numeric), -PH)
 
 cor_matrix <- cor(numeric_data, use = "complete.obs")
 
@@ -173,9 +414,9 @@ corrplot(cor_matrix_filtered,
          mar = c(0,0,2,0))
 ```
 
-**From the findCorrelation function, we can see that they match my analysis of the correlation plot, with the exception of density. This is likely due to density having an average correlation that is less than 85% with the other predictors. As such, it will not be a candidate for removal. However, the rest of the predictors: "Balling", "Hyd.Pressure3", "Alch.Rel", "Balling.Lvl", "Carb.Rel", "Filler.Level" and "Filler.Speed" is recommended.**
+**From the findCorrelation function, we can see that they match my analysis of the correlation plot, with the exception of density and Carb.Rel. This is likely due to density and carb.rel having an average correlation that is less than 85% with the other predictors. As such, it will not be a candidate for removal. However, the rest of the predictors: "Balling", "Hyd.Pressure3", "Alch.Rel", "Balling.Lvl", "Carb.Rel", "Filler.Level" and "Filler.Speed" is recommended.**
 
-```{r}
+```{r echo=FALSE}
 high_corr <- findCorrelation(cor_matrix, cutoff = 0.85, names = TRUE, exact = TRUE)
 high_corr 
 
@@ -188,6 +429,12 @@ high_cor_pairs <- data.frame(
 
 #(high_cor_pairs)
 ```
+
+## Reccomendations from EDA
+
+- Predictors: `Balling`, `Hyd.Pressure3`, `Alch.Rel`, `Balling.Lvl`, `Filler.Level`,  and `Filler.Speed` suggested to be removed due to no significant correlation to target variable `PH`
+- Consider robust methods to dealing with the predictor outliers. Several predictors (`MFR`, `Fill.Pressure`, `Temperature`, `Air.Pressure`, `Filler.Speed`) show non-normal distributions and non/weak linear correlations with PH. In addition to exhibiting patterns as that of an ordinal categorical variable. This approach could be less sensitive to outliers and can capture non-linear patterns without requiring transformations
+- After removal of suggested predictors, it is recommended and suggested to use multiple imputation (such as missForest) on NAs. As it is flexible to our sample size of predictors. Since we also will be keeping our categorical variable, `Brand.Code`, missing forest is recommended as it allows for working with various kinds of continuous and categorical variables, creating a single completed data set by iteratively predicting missing values.
 
 =========================================================================
 **Data Preparation: Imputation, transformations, Encoding and Filtering**
@@ -751,7 +998,7 @@ Stage 3: Spatial Sign (The Golden State): The data is projected onto a multidime
 Earlier we saw that removing rows with outliers would have cost us 33.66% of your data. 
 Missing values create a similar problem in modeling the data.
 
-If 10% of your rows have at least one NA, deleting those rows shrinks training data significantly.
+If 10% of rows have at least one NA, deleting those rows shrinks training data significantly.
 By imputing, we keep all 2,567 rows, which gives the model more examples to learn from, making it more robust and accurate.
 
 ```{r}
@@ -932,5 +1179,6 @@ cat("Test predictors:", ncol(test_ready_aligned), "\n")
 # This should now return TRUE
 all(colnames(train_ready |> select(-PH)) == colnames(test_ready_aligned))
 ```
+
 
 
