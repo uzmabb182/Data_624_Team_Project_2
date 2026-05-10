@@ -618,7 +618,7 @@ It treats the missing data as the target to be predicted, and uses all the non-m
 library(missForest)
 library(dplyr)
 
-# 1. Lock in the Brand.Code fix for BOTH sets
+# Lock in the Brand.Code fix for BOTH sets
 # (Converting empty strings to true NAs, and making sure they are factors)
 train_set_reduced <- train_set_reduced %>%
   mutate(Brand.Code = ifelse(Brand.Code == "", NA, as.character(Brand.Code))) %>%
@@ -628,11 +628,11 @@ val_set_reduced <- val_set_reduced %>%
   mutate(Brand.Code = ifelse(Brand.Code == "", NA, as.character(Brand.Code))) %>%
   mutate(Brand.Code = as.factor(Brand.Code))
 
-# 2. Separate the target variable (PH) so the imputer cannot cheat
+# Separate the target variable (PH) so the imputer cannot cheat
 train_predictors <- train_set_reduced %>% select(-PH)
 val_predictors <- val_set_reduced %>% select(-PH)
 
-# 3. Execute the Random Forest Imputation
+# Execute the Random Forest Imputation
 set.seed(42)
 cat("Starting Random Forest imputation on the Training Set. \n(Note: This might take a minute or two as it builds hundreds of trees...)\n")
 
