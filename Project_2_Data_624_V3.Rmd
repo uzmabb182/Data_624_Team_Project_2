@@ -444,7 +444,7 @@ high_cor_pairs <- data.frame(
 ## Data Preprocessing Steps
 =========================================================================
 
-## Step 1: Train and Validation Data Split
+## Train and Validation Data Split
 
 **The Rationale:**
 
@@ -485,7 +485,7 @@ cat("Validation Set Dimensions:", dim(val_set), "\n")
 ```
 If we fill in missing target values with our own guesses, we train the model to predict fake data instead of reality, creating a false sense of accuracy.
 
-## Step 2: Remove Highly Correlated Predictors (Multicollinearity)
+## Remove Highly Correlated Predictors (Multicollinearity)
 The Rationale:
 As we noted in the EDA feedback, several predictors in this dataset (like Balling, Hyd.Pressure3, Density, etc.) are highly correlated with each other (correlation > 0.85). This is called multicollinearity.
 
@@ -579,8 +579,6 @@ Missing Values Existfor now: We can clearly see NA's :178 under MFR and NA's :31
 
 ## The Visualization Step: Mapping the NAs
 ##The Rationale:
-
-We will create two plots:
 
 vis_miss(): This gives us a bird's-eye view of the whole dataset, showing exactly where the holes are and calculating the total percentage of missing data.
 
@@ -835,4 +833,9 @@ cat("--- Final Preprocessing Complete ---\n")
 cat("Check the summary of Fill.Ounces to see the new standardized scale:\n")
 summary(train_set_final$Fill.Ounces)
 ```
+
+## Outliers are "Evidence," not "Errors"
+The boxplots in the EDA showed many extreme values (like spikes in Oxygen.Filler).
+
+The Insight: Because these spikes often happen in patterns, the EDA suggests they are real operational machine behaviors. Deleting them would be like a detective throwing away a fingerprint just because it looked messy.We need those outliers to help the model predict PH when things go wrong on the production line.
 
