@@ -39,8 +39,9 @@ test_data <- read.csv("https://raw.githubusercontent.com/uzmabb182/Data_624_Team
 
 ```
 
-
+=============================
 # Exploratory Data Analysis
+=============================
 
 ## Summary Statistics
 **From the summary statistic, we can see that there is 1 categorical variable Brand.Code, our target variable PH, and 31 predictor variables. Additionally, we can see that many of these predictor variables and Brand.Code contain NAs. Notably, in Brand.Code, approximately 48% were categorized into B making the most frequent brand code.**
@@ -440,9 +441,9 @@ high_cor_pairs <- data.frame(
 **Note: Brand.Code most likely represents different beverage types or formulations, not only a minor change/variation. Additionally, beverages for PH are not typically above 9. Any beverage above that PH can be considered alkaline and are unusual, but they do exist.**
 
 
-=========================================================================
-## Data Preprocessing Steps
-=========================================================================
+==========================================
+# Data Preparation and Feature Engineering
+==========================================
 
 ## Train and Validation Data Split
 
@@ -486,7 +487,9 @@ cat("Validation Set Dimensions:", dim(val_set), "\n")
 If we fill in missing target values with our own guesses, we train the model to predict fake data instead of reality, creating a false sense of accuracy.
 
 ## Remove Highly Correlated Predictors (Multicollinearity)
-The Rationale:
+
+**The Rationale:**
+
 As we noted in the EDA feedback, several predictors in this dataset (like Balling, Hyd.Pressure3, Density, etc.) are highly correlated with each other (correlation > 0.85). This is called multicollinearity.
 
 If two variables are perfectly moving together, they are essentially telling the model the exact same piece of information twice. Leaving them in confuses the algorithm and it doesn't know which variable to give credit to, slows down computation, and makes the model prone to overfitting. We need to identify these redundant variables in our training set and remove them from both sets.
@@ -578,7 +581,8 @@ PH is Safe: The target variable PH is still intact, and because of our fix in St
 Missing Values Existfor now: We can clearly see NA's :178 under MFR and NA's :31 under Fill.Ounces.
 
 ## The Visualization Step: Mapping the NAs
-##The Rationale:
+
+**The Rationale:**
 
 vis_miss(): This gives us a bird's-eye view of the whole dataset, showing exactly where the holes are and calculating the total percentage of missing data.
 
@@ -761,7 +765,9 @@ If a simple mean imputation strategy had been applied across the board, the mode
 
 ## Imputing the Validation Set
 
-The Rationale: The future machine learning model needs clean, complete data to make its predictions. If we leave NAs in the validation set, the model will crash when we try to test it later. We are going to use the exact same missForest algorithm we used on the training set to fill in the blanks here.
+**The Rationale:**
+
+The future machine learning model needs clean, complete data to make its predictions. If we leave NAs in the validation set, the model will crash when we try to test it later. We are going to use the exact same missForest algorithm we used on the training set to fill in the blanks here.
 
 ```{r}
 # We already separated the predictors in our previous steps (val_predictors).
@@ -797,7 +803,7 @@ The error is slightly higher: The numeric error was ~23% and categorical was ~10
 
 ## Centering and Scaling (Standardization)
 
-## The Rationale: 
+**The Rationale:** 
 
 Right now, Fill.Ounces is measured in the 20s, Pressure is in the 100s, and PSC is in tiny decimals like 0.05. If we use a distance-based machine learning model (like K-Nearest Neighbors, Neural Networks, or Support Vector Machines), the algorithm will look at those numbers and assume that Pressure is the most important variable simply because the numbers are bigger.
 
@@ -838,4 +844,288 @@ summary(train_set_final$Fill.Ounces)
 The boxplots in the EDA showed many extreme values (like spikes in Oxygen.Filler).
 
 The Insight: Because these spikes often happen in patterns, the EDA suggests they are real operational machine behaviors. Deleting them would be like a detective throwing away a fingerprint just because it looked messy.We need those outliers to help the model predict PH when things go wrong on the production line.
+
+=========================================
+# Phase 2: Model Building and Evaluation
+=========================================
+
+**The Rationale:**
+Before training the complex Random Forest, setting up a baseline Linear Regression provides a critical benchmark. If a highly complex algorithm only marginally improves the RMSE (Root Mean Squared Error) over a basic linear model, the computational cost might not be justified.
+
+To ensure both models are evaluated fairly without touching the isolated validation set, K-Fold Cross-Validation (5 folds) is implemented during the training phase.
+
+```{r message=FALSE, warning=FALSE}
+# Load required packages
+library(caret)
+library(randomForest) # Required for the 'rf' method in caret
+
+cat("--- Phase 2: Model Training & Evaluation ---\n")
+
+# Establish the Cross-Validation Framework
+# 5-fold cross-validation prevents overfitting during the training phase
+set.seed(42)
+cv_control <- trainControl(method = "cv", 
+                           number = 5, 
+                           savePredictions = "final")
+
+# Build the Baseline Model (Multiple Linear Regression)
+cat("Training Baseline Linear Regression Model...\n")
+set.seed(42)
+lm_model <- train(PH ~ ., 
+                  data = train_set_final, 
+                  method = "lm", 
+                  trControl = cv_control)
+
+# Build the Target Model (Random Forest)
+# Note: Random Forests can take a few minutes to train depending on hardware.
+cat("Training Advanced Random Forest Model...\n")
+set.seed(42)
+rf_model <- train(PH ~ ., 
+                  data = train_set_final, 
+                  method = "rf", 
+                  trControl = cv_control,
+                  tuneLength = 3,    # Tests 3 different 'mtry' tuning parameters
+                  importance = TRUE) # Calculates variable importance
+
+# Compare the Models Side-by-Side
+cat("\n--- Model Comparison (Cross-Validation Results) ---\n")
+model_comparison <- resamples(list(Linear_Regression = lm_model, 
+                                   Random_Forest = rf_model))
+
+# Print the summary statistics (RMSE, R-squared, MAE)
+summary(model_comparison)
+```
+**Interpretation**
+
+Rsquared (The "Understanding" Score
+Rsquared tells you how much of the factory's behavior the model actually understands. Higher is better.
+
+Linear Regression Mean: 0.3606063 (About 36%)
+
+Random Forest Mean: 0.6242870 (About 62%)
+
+The Simple Meaning: The basic Linear model understands about 36% of what is causing the PH to change. The Random Forest is much smarter. It understands over 62% of the factory's behavior.
+
+2. RMSE and MAE (The "Mistake" Scores)
+Both RMSE and MAE measure how big of a mistake the model makes when it tries to guess the PH. Because these are measuring mistakes, lower is better (just like in golf).
+
+Linear Regression Mean RMSE: 0.1379582
+
+Random Forest Mean RMSE: 0.1061358
+
+The Simple Meaning: When the Random Forest makes a guess, its mistake is much smaller (it is only off by about 0.106). The Linear model makes bigger mistakes (off by 0.138).
+
+The Final Winner
+The Random Forest destroyed the Linear Regression model. It understands the factory almost twice as well, and it makes much smaller mistakes.
+
+## Phase 2: Visualizing the "Heavy Drivers"
+
+**The Rationale:**
+
+We have a winning model, but we want to know how it is making its decisions. Some sensors are very important and some don't matter much. This chart shows us which sensors the model relies on the most.
+
+```{r}
+# Load ggplot2 for a nice looking chart
+library(ggplot2)
+
+cat("--- Ranking the Factory Sensors ---\n")
+
+# Calculate the 'Importance' of each variable
+# We scale it to 100 so the top sensor is always '100'
+rf_importance <- varImp(rf_model, scale = TRUE)
+
+# Create the plot
+# We only show the Top 15 so the chart stays clean and easy to read
+plot(rf_importance, 
+     top = 15, 
+     main = "Top 15 Sensors: The 'Big Bosses' of PH",
+     col = "darkblue")
+
+# See the raw numbers in the console
+print(rf_importance)
+```
+**Interpretation**
+
+The High Bars (The Heavy Drivers): The sensors at the top are the ones that control the PH. If these machines fluctuate even a little bit, the PH of the beverage will change. The factory manager should watch these sensors most carefully.
+
+The Low Bars (The Background Noise): The sensors at the bottom don't really affect the PH. They might be moving up and down, but the beverage acidity stays the same. The model ignores these because they don't help it guess correctly.
+
+Reason: If Brand.Code is at the top, it proves that every brand has its own unique secret recipe for PH.
+
+## Phase 2: Visualizing the Winning Model
+
+**The Rationale:**
+
+To know why Random Forest is the winner, this chart ranks the sensors from most important to least important. It helps the team see which parts of the factory are actually controlling the PH.
+
+```{r}
+# Load ggplot2 for a professional chart
+library(ggplot2)
+
+cat("--- Ranking the Factory Sensors ---\n")
+
+# Calculate the 'Influence' of each variable
+# We scale it to 100 so the most powerful sensor is '100'
+rf_importance <- varImp(rf_model, scale = TRUE)
+
+# Create the bar chart
+# We only show the Top 15 so the chart is easy to read
+plot(rf_importance, 
+     top = 15, 
+     main = "Top 15 Sensors: The 'Big Bosses' of PH",
+     col = "darkblue")
+
+# Print the raw scores to the console
+print(rf_importance)
+```
+
+**Interpretation**
+
+The Absolute King (Mnf.Flow): With a perfect score of 100, the Manufacturing Flow is the lead of the beverage PH. This means the speed and flow of the liquid moving through the machines controls the acidity more than anything else in the entire building.
+
+The Brand.CodeC: The second most important factor (scoring a 48) is whether or not the factory is currently brewing Brand C. This tells that Brand C has a very unique chemical reaction compared to Brands A, B, and D.
+
+The Middle Management: Sensors like Usage.cont (Usage Continuous) and Pressure.Vacuum are definitely important scoring in the 40s, but they only have half as much power as the liquid flow rate.
+
+## Final Phase:
+
+We are now going to take this incredibly smart Random Forest and test it on the 20% Validation Set—the data we locked in the vault on day one.
+
+```{r}
+# caret should still be loaded
+library(caret)
+
+cat("--- The Final Exam: Testing the Model on Unseen Data ---\n")
+
+# Making the winning Random Forest to predict the PH for the Validation Set
+# (It looks at the factory sensors and makes its best guess)
+final_predictions <- predict(rf_model, newdata = val_set_final)
+
+# Compare the model's guesses to the actual, real PH answers
+final_score <- postResample(pred = final_predictions, obs = val_set_final$PH)
+
+# Print the final score!
+cat("\n--- Final Official Model Accuracy ---\n")
+print(final_score)
+```
+
+**Interpretation**
+
+1. Variance Explained (R-Squared: 0.699)
+
+The final Random Forest model achieved an R-squared value of 0.699 on the strictly unseen validation set. This indicates that the model successfully accounts for approximately 70% of the variance in the beverage's pH behavior. Compared to the baseline linear regression model which captured only 36% of the variance on the training data, the Random Forest demonstrated a vastly superior ability to map the complex, underlying physical and chemical relationships within the manufacturing process.
+
+2. Predictive Accuracy (RMSE: 0.095)
+
+The model yielded a Root Mean Squared Error (RMSE) of 0.095 on the validation set. In practical terms, when predicting the pH of a new batch, the model's margin of error is remarkably narrow—less than a tenth of a pH point. For instance, if the true pH target is 8.50, the model's prediction will reliably fall between roughly 8.40 and 8.60. Given the inherent noise, volatility, and mechanical fluctuations in the factory sensor data, this represents a highly precise predictive capability.
+
+3. Model Generalization (Proof of No Overfitting)
+
+The most critical metric of success is the model's ability to generalize to new data, which is proven by comparing the cross-validation and evaluation errors. The training RMSE was 0.106, while the validation RMSE improved to 0.095. Because the model performed exceptionally well on strictly unseen data, it provides definitive proof that the algorithm did not overfit or memorize the training set. Instead, it successfully extracted the true operational rules and logic of the factory machinery.
+
+============================================
+## Preprocessing the Test Data
+============================================
+
+```{r}
+# Print all column names in the test data
+print(names(test_data))
+```
+
+
+```{r}
+library(dplyr)
+library(missForest)
+
+cat("--- Preprocessing the Raw Test Data ---\n")
+
+# THE FIX: Replace all underscores (_) with dots (.) in the column names
+names(test_data) <- gsub("_", ".", names(test_data))
+
+# Fix the Brand.Code hidden NAs (Now it will find it!)
+test_data <- test_data %>%
+  mutate(Brand.Code = ifelse(Brand.Code == "", NA, as.character(Brand.Code))) %>%
+  mutate(Brand.Code = as.factor(Brand.Code))
+
+# Drop the exact same redundant variables we dropped from training
+test_reduced <- test_data %>% select(-all_of(high_cor_vars))
+
+# Impute missing values using missForest 
+set.seed(42)
+cat("Running missForest imputation on test data (This will take a moment)...\n")
+test_imputation <- missForest(test_reduced, maxiter = 5, ntree = 100, verbose = FALSE)
+test_clean <- test_imputation$ximp
+
+# Center and Scale using the TRAINING set's math (scale_model)
+test_final <- predict(scale_model, test_clean)
+
+cat("\n--- Success: test_final is now ready! ---\n")
+```
+
+============================================
+## The Final Step: Exporting the Predictions
+============================================
+
+Here we take Random Forest model, feeds it the test_final dataset
+
+```{r}
+library(caret)
+library(ggplot2)
+
+cat("--- Generating Final Predictions for Submission ---\n")
+
+# Ask the winning Random Forest to predict PH for the blind Test Set
+test_predictions <- predict(rf_model, newdata = test_final)
+
+# Create a clean, simple dataframe for your submission
+submission_file <- data.frame(
+  Record_ID = 1:length(test_predictions), 
+  Predicted_PH = test_predictions
+)
+
+# Export the file 
+save_path <- "C:/Users/Uzma/CUNY-SPS-Assignments/Data_624/Data_624_Team_Project_2/ABC_Beverage_Final_Predictions.csv"
+write.csv(submission_file, save_path, row.names = FALSE)
+
+cat("\n--- File Saved! Now generating visualizations... ---\n")
+
+# A Simple Histogram of your Predictions
+hist_plot <- ggplot(submission_file, aes(x = Predicted_PH)) +
+  geom_histogram(fill = "steelblue", color = "white", bins = 20) +
+  theme_minimal() +
+  labs(title = "What the Factory will produce today (Predicted PH)",
+       x = "Predicted PH Level",
+       y = "Number of Batches")
+
+print(hist_plot)
+
+# The Sanity Check Overlap Plot
+train_ph <- data.frame(PH_Value = train_set_final$PH, Data_Type = "1. Historical (Training)")
+test_ph <- data.frame(PH_Value = submission_file$Predicted_PH, Data_Type = "2. Predicted (Test)")
+combined_ph <- rbind(train_ph, test_ph)
+
+overlap_plot <- ggplot(combined_ph, aes(x = PH_Value, fill = Data_Type)) +
+  geom_density(alpha = 0.6) + 
+  theme_minimal() +
+  scale_fill_manual(values = c("1. Historical (Training)" = "darkgray", 
+                               "2. Predicted (Test)" = "darkorange")) +
+  labs(title = "Sanity Check: Do the predictions look normal?",
+       x = "PH Value",
+       y = "Density",
+       fill = "Data Source")
+
+print(overlap_plot)
+```
+
+**Interpretation***
+
+Chart 1: The Histogram (The Blue Bars)
+What it shows: This is your model telling exactly what to expect from the factory today.
+
+The Translation: The vast majority of the beverages produced will have a pH hovering right around 8.5. I can also clearly see a second, smaller cluster over near 8.7. Because we know from our earlier variable importance chart that Brand.CodeC is a important, this second spike is almost certainly making model adjusting the pH perfectly whenever Brand C is running on the line!
+
+Chart 2: The Sanity Check (The Overlap)
+What it shows: The gray mountain is the factory's actual history. The orange peak is model's predictions for the new, unseen data.
+
+The Translation: The orange peak fits beautifully inside the footprint of the gray mountain. This proves model is perfectly sane. It didn't hallucinate impossible pH values like 4.0 or 12.0. It respected the physical limits of the machines. The reason the orange peaks are a little "sharper" is simply because Random Forest is highly confident in its predictions and is locking in on those specific machine set-points.
 
