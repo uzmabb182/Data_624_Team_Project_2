@@ -1127,5 +1127,5 @@ The Translation: The vast majority of the beverages produced will have a pH hove
 Chart 2: The Sanity Check (The Overlap)
 What it shows: The gray mountain is the factory's actual history. The orange peak is model's predictions for the new, unseen data.
 
-The Translation: The orange peak fits beautifully inside the footprint of the gray mountain. This proves model is perfectly sane. It didn't hallucinate impossible pH values like 4.0 or 12.0. It respected the physical limits of the machines. The reason the orange peaks are a little "sharper" is simply because Random Forest is highly confident in its predictions and is locking in on those specific machine set-points.
+The Translation: The orange peak fits beautifully inside the footprint of the gray mountain. This proves model is perfectly sane. It didn't hallucinate impossible pH values like 4.0 or 12.0. It respected the physical limits of the machines. The reason the orange peaks are a little sharper is simply because Random Forest is highly confident in its predictions and is locking in on those specific machine set-points.
 
