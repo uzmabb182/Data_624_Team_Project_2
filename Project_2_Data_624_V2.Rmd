@@ -1,6 +1,6 @@
 ---
 title: "Project_2_Data_624"
-author: "Farhod Ibragimov, Alexander Simon, Jackie Yee, Mubashira Qari"
+author: "Jackie Yee, Mubashira Qari"
 date: "2026-04-18"
 output:
   html_document:
@@ -18,7 +18,7 @@ output:
 library(tidyverse)
 library(mice)      # For advanced imputation
 library(caret)     # For data splitting and pre-processing
-library(rcompanion)
+#library(rcompanion)
 library(ggplot2)
 library(UpSetR) # Upset plot
 library(corrplot) # corelation plot
@@ -31,6 +31,8 @@ library(psych)
 library(dplyr)
 library(rstatix)
 library(mice)
+library(dplyr)
+library(visdat)
 
 # Load the datasets
 train_data <- read.csv("https://raw.githubusercontent.com/uzmabb182/Data_624_Team_Project_2/refs/heads/main/StudentData.csv", stringsAsFactors = FALSE)
@@ -94,12 +96,57 @@ num_summary %>%
 sum(duplicated(train_data))
 ```
 
-**From the summary statistic, we can see that there contains many NAs throughout the variables. To check if there is a pattern to these NAs, we can begin by using the [vis_miss() function from the naniar library](https://www.r-bloggers.com/2025/08/handling-missing-data-in-r-a-comprehensive-guide/) to visualize any patterns or relationships that may need to be preserved. In the plot below, we observed that around 1% of the data contains NAs or missing data. 8% of the missing data being from MFR. Other predictors have missingness < 2.5%. Before we can begin to outline with imputation technique to ultilize in dealing with the missing data, we need to look at which predictors correlate to PH through visual analysis.**
+### Checking for Data Mechanisms
+
+**We conduct a quick NHANES check to see which type of data mechanism it could possibly be. To do this, we can check the missing data mechanism through summary statistics. We do so through looking at the overall missingness per variable, which allows us to identify why the data is missing. From the summary statistic, we are able to see that the missing data is likely [MAR (Missing At Random) or MCAR (Missing Completely At Random), but not MNAR (Missing Not At Random)](https://www.r-bloggers.com/2025/08/handling-missing-data-in-r-a-comprehensive-guide/). This is due to MFR containing the highest number of NAs (8.2%), which tells us that missingness is not uniform across variables and that most other variables have < 2% missingness.**
+
+```{r echo=FALSE}
+na_summary <- train_data %>%
+  summarise(across(everything(), ~ mean(is.na(.)) * 100)) %>%
+  tidyr::pivot_longer(everything(), names_to = "Variable", values_to = "Percent_NA") %>%
+  mutate(Percent_NA = round(Percent_NA, 1)) %>%
+  arrange(desc(Percent_NA))
+
+na_summary %>%
+  kable(caption = "Missingness per Variable") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+**To validate that the data mechanism is MAR, we can check if MFR against the mean temperature. From the summary, we can see that when MFR is not missing, the mean temperature is lower than when the MFR is missing. This tells us that there's around a difference of 1.88 degrees Fahrenheit higher mean Temperature when MFR is missing, so MFR does correlates with higher temperature.**
+
+```{r echo=FALSE}
+train_data <- train_data %>%
+  mutate(MFR_missing = is.na(MFR))
+
+mar_check <- train_data %>%
+  group_by(MFR_missing) %>%
+  summarise(mean_Temp = round(mean(Temperature, na.rm = TRUE), 2),
+            n = n())
+
+mar_check %>%
+  kable(caption = "Mean Temperature by MFR Missing Status") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+**Additionally, to validate, we can run a Welch Two Sample t-test to check if it is a significant difference. By rejecting the Null Hypothesis that the null values are MCAR, we accept the alternative that the data mechanism is MAR. Telling us that the missingness has a pattern.**
+
+```{r echo=FALSE}
+t.test(Temperature ~ MFR_missing, data = train_data)
+```
+
+
+**The vis_miss function from the naniar library visualizes any patterns or relationships that may need to be preserved. In the plots below, it confirms our summary statistics as we observed that around 1% of the data contains NAs or missing data. 8% of the missing data being from MFR. Other predictors have missingness < 2.5%.**
 
 ```{r echo=FALSE}
 vis_miss(train_data) + 
   coord_flip() 
 ```
+
+```{r}
+vis_dat(train_data)
+```
+
+**From our analysis of the missingness in the dataset, we can conclude that the data mechanism is MAR. Since it is MAR, it is suggested that handle the missing data through multiple imputation such as missForest, which is able to iteratively predicting missing values using random forest models. MissForest works well in our case due to working with various kinds of continuous and categorical variables, creating a single completed data set by iteratively predicting missing values.**
 
 ```{r eval=FALSE, include=FALSE}
 #na_prop <- train_data %>%
@@ -251,7 +298,7 @@ print(cor_table)
 - `Fill.Ounces`, `PC.Volume`, `PSC`, `Carb.Pressure1` and `Fill.Pressure` have outliers that aren't extremely far from the IQR.
 - `Oxygen.Filler`, `MFR` and `Temperature` suggests extreme outliers.
 
-**From our previous observations, we noted that Temperature acts more like a factor/category than numeric predictor.**
+**From our previous observations, we note that Temperature acts more like a factor/category than numeric predictor.**
 
 ```{r echo=FALSE, message=FALSE, warning=FALSE}
 vars <- c("Fill.Ounces", "PC.Volume", "PSC", "Carb.Pressure1", "Oxygen.Filler", "MFR", "Fill.Pressure", "Temperature")
@@ -439,750 +486,401 @@ high_cor_pairs <- data.frame(
 
 **Note: Brand.Code most likely represents different beverage types or formulations, not only a minor change/variation. Additionally, beverages for PH are not typically above 9. Any beverage above that PH can be considered alkaline and are unusual, but they do exist.**
 
-
-=========================================================================
-**Data Preparation: Imputation, transformations, Encoding and Filtering**
-=========================================================================
+# Data Preparation and Preprocessing Steps
 
 
-```{r}
-library(skimr)
+## Train and Validation Data Split
 
-skim(train_data)
-```
+**The Rationale:**
 
-
-```{r}
-
-# View the structure and summary of the data
-#str(train_data)
-#summary(train_data)
-```
-
-**Target Variable (PH) Validation**
-
-First we examine the PH column in the training set and remove records that do not have an associated PH value.
-If we include rows in our training set where the PH value is missing (NA), the mathematical algorithms will have no answer key to learn from for those specific rows. 
-
-While we can use statistical methods to guess (impute) missing predictor values like temperature, we should never guess the target value in the training data, since this introduces artificial bias into our model. 
-
-Removing these 4 records ensures our model is built only on confirmed, historical production facts.
-
-```{r}
-# Count missing values in the target variable
-missing_ph <- sum(is.na(train_data$PH))
-print(paste("Missing PH values in training set:", missing_ph))
-
-# Remove rows where PH is NA
-filtered_data <- train_data |>
-  filter(!is.na(PH))
-
-head(filtered_data)
-```
-
-**Column Name Standardization**
-
-```{r}
-# Replace all periods with underscores in the column names
-colnames(filtered_data) <- gsub("\\.", "_", colnames(filtered_data))
-colnames(test_data) <- gsub("\\.", "_", colnames(test_data))
-
-# Quick check to see the new names
-names(filtered_data)
-```
-
-
-**Analysis of Dataset**
-
-```{r message=FALSE, warning=FALSE}
-# Checking the total number of missing values per column
-missing_summary <- colSums(is.na(filtered_data))
-print(missing_summary[missing_summary > 0]) # Show only columns with NAs
-
-# Visualizing the missing patterns
-# install.packages("VIM")
-library(VIM)
-aggr(filtered_data, col=c('navyblue','red'), numbers=TRUE, sortVars=TRUE, 
-     labels=names(train_data), cex.axis=.7, gap=3, 
-     ylab=c("Histogram of missing data","Pattern"))
-```
-
-
-```{r}
-head(filtered_data)
-```
-
-In Chapter 3 of Applied Predictive Modeling, the nearZeroVar function uses a strict two-part mathematical test to decide if a predictor is useless (NZV). A predictor is only marked TRUE if it satisfies both of these conditions:
-
-The Frequency Ratio is > 19: This means the most common value appears at least 19 times more often than the second most common value.
-
-The Percent Unique is < 10%: This means the number of unique values in the column is less than 10% of the total number of rows.
-
-**Identify Near-Zero Variance (NZV) Predictors**
-
-```{r}
-
-# 'saveMetrics = TRUE' provides the detailed math behind the decision
-nzv_analysis <- nearZeroVar(filtered_data, saveMetrics = TRUE)
-
-nzv_analysis
-```
-When we look at the raw data for Hyd Pressure1, we can see exactly why it matched both conditions:
-
-Frequency Ratio (~31.1): The value 0.0 appears 840 times. 
-Since 840 / 27 approx. 31.1, it far exceeds the imbalance threshold of 19 and this is below 10%. 
-This tells the algorithm that this variable is almost a constant zero.
-
-Consequence of not removing: removing Hyd Pressure1 because if you perform Resampling like Cross-Validation, there is a high statistical chance that in one of folds, that variable will become a constant 0 for every single row. If that happens, many models will crash because they cannot calculate a slope or weight for a column that never changes.
-
-
-```{r}
-# Identify the indices of the predictors to remove
-
-nzv_indices <- nearZeroVar(filtered_data)
-
-# Remove these predictors from the TRAIN and TEST sets
-# Saving into NEW variables as requested
-train_data_cleaned <- filtered_data[, -nzv_indices]
-test_data_cleaned <- test_data[, -nzv_indices]
-
-# Verify the change
-# Check how many columns were removed
-cat("Original number of columns:", ncol(filtered_data), "\n")
-cat("New number of columns:", ncol(train_data_cleaned), "\n")
-
-# View which column was removed
-colnames(filtered_data)[nzv_indices]
-```
-
-
-```{r}
-# Identifying which column index corresponds to the NZV predictor 
-# from our previous nzv_analysis object
-nzv_cols <- which(nzv_analysis$nzv == TRUE)
-
-# Removing the columns from train and test datasets
-
-train_data_final <- filtered_data[, -nzv_cols]
-test_data_final <- test_data[, -nzv_cols]
-
-# Verifying that the shapes match
-dim(train_data_final)
-dim(test_data_final)
-
-```
-
-**Transformations to Resolve Skewness**
-
-Many predictive models (especially linear models and Neural Networks) perform much better when the predictors have a symmetric, normal distribution.
-
-
-**Checking Skewness**
+Before we impute missing values, handle outliers, or transform features, we must split our dataset. If we calculate global metrics like means for imputation or correlation thresholds on the entire dataset, information from the validation set will leak into the training process. By splitting first, we ensure our preprocessing rules are learned only from the training data and then blindly applied to the validation data, giving us a true measure of how our model will perform in the real world.
 
 ```{r}
 # Load required libraries
-library(tidyverse) # Contains dplyr, tidyr, and ggplot2
-library(e1071)     # Contains the skewness() function
-
-# Starting the pipeline with your cleaned training data
-train_data_final |>
-  
-  # Keeping only the numeric columns
-  select(where(is.numeric)) |>
-  
-  # Calculating skewness for every remaining column
-  summarise(across(everything(), ~skewness(.x, na.rm = TRUE))) |>
-  
-  # Reshaping the data from wide (one row) to long (two columns: Predictor, Skewness)
-  pivot_longer(cols = everything(), names_to = "Predictor", values_to = "Skewness") |>
-  
-  # Adding the flag to identify which variables are highly skewed
-  mutate(Highly_Skewed = ifelse(abs(Skewness) > 1, "High Skew", "Acceptable Skew")) |>
-  
-  # Pipe the formatted data directly into ggplot
-  ggplot(aes(x = reorder(Predictor, Skewness), y = Skewness, fill = Highly_Skewed)) +
-  geom_col(color = "black", linewidth = 0.2) +
-  coord_flip() + 
-  scale_fill_manual(values = c("Acceptable Skew" = "skyblue", "High Skew" = "salmon")) +
-  
-  # Add the safe threshold lines
-  geom_hline(yintercept = c(-1, 1), linetype = "dashed", color = "red", linewidth = 1) +
-  
-  labs(
-    title = "Skewness of All Numeric Predictors",
-    subtitle = "Variables extending past the red dashed lines need Box-Cox transformation",
-    x = "Predictors",
-    y = "Skewness Value"
-  ) +
-  theme_minimal()
-```
-
-The chart identifies which numeric predictors in dataset have a high skewness extending beyond the safe +/- 1 threshold (red lines), highlighting exactly which variables using Yeo-Johnson instead of Box-Cox to fix skewed distributions.
-
-**Handle Skewness in Data**
-
-```{r}
 library(caret)
-
-# Create a pre-processing plan using Yeo-Johnson instead of Box-Cox
-# This will handle the zeros in variables like Filler_Speed and Mnf_Flow
-yj_plan <- preProcess(
-  train_data_final[, !(names(train_data_final) %in% c("PH", "Brand_Code"))], 
-  method = "YeoJohnson"
-)
-
-# Apply the plan to fix the skewness
-train_data_unskewed <- predict(yj_plan, train_data_final)
-test_data_unskewed <- predict(yj_plan, test_data_final)
-
-# 3. Check the skewness again to verify it worked this time!
 library(tidyverse)
-library(e1071)
+library(ggplot2)
 
-train_data_unskewed |>
-  select(where(is.numeric)) |>
-  summarise(across(everything(), ~skewness(.x, na.rm = TRUE))) |>
-  pivot_longer(cols = everything(), names_to = "Predictor", values_to = "New_Skewness") |>
-  arrange(desc(abs(New_Skewness))) |>
-  head(10)
-```
+# Load the raw dataset
+url_train <- "https://raw.githubusercontent.com/uzmabb182/Data_624_Team_Project_2/refs/heads/main/StudentData.csv"
+raw_data <- read.csv(url_train, stringsAsFactors = FALSE)
 
-**Verify Skewness**
+# Drop rows where the target variable (PH) is missing
+raw_data_clean <- raw_data %>% filter(!is.na(PH))
 
-```{r}
-# Load required libraries
-library(tidyverse)
-library(e1071)
-
-# Check the skewness of the newly unskewed dataset
-train_data_unskewed |>
-  
-  # Keep only the numeric columns
-  select(where(is.numeric)) |>
-  
-  # Calculate skewness for every remaining column
-  summarise(across(everything(), ~skewness(.x, na.rm = TRUE))) |>
-  
-  # Reshape into a clean two-column table
-  pivot_longer(cols = everything(), names_to = "Predictor", values_to = "New_Skewness") |>
-  
-  # Sort by the highest absolute skewness to see the "worst" ones first
-  arrange(desc(abs(New_Skewness))) |>
-  
-  # Print the top 10 results
-  head(10)
-```
-
-```{r}
-# Load required libraries
-library(tidyverse)
-library(e1071)
-
-# Start the pipeline with the dataset AFTER the Yeo-Johnson transformation
-train_data_unskewed |>
-  
-  # Keep only the numeric columns
-  select(where(is.numeric)) |>
-  
-  # Calculate the NEW skewness for every remaining column
-  summarise(across(everything(), ~skewness(.x, na.rm = TRUE))) |>
-  
-  # Reshape the data for plotting
-  pivot_longer(cols = everything(), names_to = "Predictor", values_to = "Skewness") |>
-  
-  # Add the flag to identify which variables are STILL highly skewed
-  mutate(Highly_Skewed = ifelse(abs(Skewness) > 1, "High Skew (Still)", "Acceptable Skew")) |>
-  
-  # Pipe into ggplot for the visualization
-  ggplot(aes(x = reorder(Predictor, Skewness), y = Skewness, fill = Highly_Skewed)) +
-  geom_col(color = "black", linewidth = 0.2) +
-  coord_flip() + 
-  scale_fill_manual(values = c("Acceptable Skew" = "skyblue", "High Skew (Still)" = "salmon")) +
-  
-  # Add the safe threshold lines
-  geom_hline(yintercept = c(-1, 1), linetype = "dashed", color = "red", linewidth = 1) +
-  
-  labs(
-    title = "Skewness AFTER Yeo-Johnson Transformation",
-    subtitle = "Variables extending past the red lines",
-    x = "Predictors",
-    y = "New Skewness Value"
-  ) +
-  theme_minimal()
-```
-```{r}
-# Load the required library
-library(tidyverse)
-
-# Define the updated list of the 6 stubborn variables
-# (Ensure the spelling exactly matches your dataset column names)
-stubborn_vars <- c("MFR", "Filler_Speed", "Oxygen_Filler", "Temperature", "Air_Pressurer", "PSC_CO2")
-
-# 2. Build the pipeline to plot all six automatically
-train_data_final |>
-  
-  # Keep only these 6 specific columns
-  select(all_of(stubborn_vars)) |>
-  
-  # Reshape the data so ggplot can draw them all at once
-  pivot_longer(cols = everything(), names_to = "Predictor", values_to = "Raw_Value") |>
-  
-  # Pipe directly into the plot
-  ggplot(aes(x = Raw_Value)) +
-  geom_histogram(bins = 50, fill = "salmon", color = "black", alpha = 0.8) +
-  
-  # facet_wrap splits the plot into 6 separate panels
-  # 'scales = "free"' is critical here so each chart gets its own correct axis
-  facet_wrap(~ Predictor, scales = "free") +
-  
-  labs(
-    title = "Raw Distributions of the Top 6 Most Skewed Variables",
-    subtitle = "Diagnosing why mathematical transformations failed",
-    x = "Raw Values",
-    y = "Count of Rows"
-  ) +
-  theme_minimal()
-```
-**Visualizing Outliers for Stubborn Variables**
-
-```{r}
-# Load the required library
-library(tidyverse)
-
-#  Define the list of stubborn variables
-stubborn_vars <- c("MFR", "Filler_Speed", "Oxygen_Filler", "Temperature", "Air_Pressurer", "PSC_CO2")
-
-# Build the pipeline for Boxplots
-train_data_final |>
-  # Select the variables
-  select(all_of(stubborn_vars)) |>
-  
-  # Reshape for ggplot
-  pivot_longer(cols = everything(), names_to = "Predictor", values_to = "Raw_Value") |>
-  
-  # Create the plot
-  ggplot(aes(x = Predictor, y = Raw_Value, fill = Predictor)) +
-  # geom_boxplot is the gold standard for outlier detection
-  geom_boxplot(outlier.color = "red", outlier.shape = 16, outlier.size = 2) +
-  
-  # Separate into individual panels for clarity
-  facet_wrap(~ Predictor, scales = "free") +
-  
-  labs(
-    title = "Outlier Detection for Stubborn Predictors",
-    subtitle = "Red dots represent potential outliers (values beyond 1.5 * IQR)",
-    x = "",
-    y = "Raw Value Range"
-  ) +
-  theme_minimal() +
-  theme(legend.position = "none") # Hide legend since facets are labeled
-```
-Interpretation:
-
-Zero-Inflated Predictors (MFR, Filler_Speed, Air_Pressurer): The data is concentrated at a single value (likely zero), causing the boxplots to appear flattened. Since these lack the necessary spread for mathematical transformations to work, they should be evaluated as Near-Zero Variance (NZV) predictors and either removed or converted into binary "On/Off" indicators.
-
-Heavy-Tailed Predictors (Oxygen_Filler, Temperature): These show a string of pearls pattern with many outliers extending upward. Because these extreme values pull the skewness calculation heavily to the right, handling involves Winsorizing (capping values at a specific percentile) or using a Spatial Sign Transformation to minimize outlier influence.
-
-Discontinuous Predictors (PSC_CO2): This variable shows a distinct set of outliers far above the main data cluster. Standard transformations fail to bridge this gap, so the best approach is to either treat the variable as a categorical factor or use tree-based models that are inherently robust to such gaps.
+# Let's see how many rows we had to drop
+rows_dropped <- nrow(raw_data) - nrow(raw_data_clean)
+cat("Rows dropped due to missing target (PH):", rows_dropped, "\n")
 
 
-```{r}
-library(tidyverse)
+# Train/Validation Split
+# Set seed for reproducibility
+set.seed(42)
 
-# Define the six stubborn variables
-stubborn_vars <- c("MFR", "Filler_Speed", "Oxygen_Filler", "Temperature", "Air_Pressurer", "PSC_CO2")
+# Create a stratified partition based on the clean target variable
+train_index <- createDataPartition(raw_data_clean$PH, p = 0.8, list = FALSE)
 
-# Calculate outliers per column
-outlier_report <- train_data_final |>
-  select(all_of(stubborn_vars)) |>
-  pivot_longer(cols = everything(), names_to = "Predictor", values_to = "Value") |>
-  group_by(Predictor) |>
-  summarise(
-    Q1 = quantile(Value, 0.25, na.rm = TRUE),
-    Q3 = quantile(Value, 0.75, na.rm = TRUE),
-    IQR = Q3 - Q1,
-    Lower_Bound = Q1 - 1.5 * IQR,
-    Upper_Bound = Q3 + 1.5 * IQR,
-    Outlier_Count = sum(Value < Lower_Bound | Value > Upper_Bound, na.rm = TRUE),
-    Percent_Outliers = round((Outlier_Count / n()) * 100, 2)
-  )
+train_set <- raw_data_clean[train_index, ]
+val_set <- raw_data_clean[-train_index, ]
 
-print("--- Outlier Count Per Predictor ---")
-print(outlier_report)
-
-# Calculate the 'Total Impact' (Rows with at least one outlier)
-rows_with_outliers <- train_data_final |>
-  mutate(has_outlier = rowSums(across(all_of(stubborn_vars), function(x) {
-    q <- quantile(x, c(0.25, 0.75), na.rm = TRUE)
-    iqr <- q[2] - q[1]
-    x < (q[1] - 1.5 * iqr) | x > (q[2] + 1.5 * iqr)
-  }), na.rm = TRUE) > 0) |>
-  summarise(
-    Total_Impacted_Rows = sum(has_outlier),
-    Total_Rows_In_Dataset = n(),
-    Percent_Data_Loss = round((Total_Impacted_Rows / n()) * 100, 2)
-  )
-
-print("--- Total Impact on Dataset ---")
-print(rows_with_outliers)
-```
-A 33.66% data loss is far too high; deleting one-third of the observations would significantly weaken the model's ability to learn and generalize.
-
-Interpretation of Stubborn Predictors
-
-Filler_Speed (17.06% Outliers): This high percentage confirms a multi-modal distribution. The "outliers" are likely the machine's actual operating speeds, while the majority of the data represents the machine being idle or in a secondary mode.
-
-MFR (9.27% Outliers): This follows a zero-inflated pattern. The boxplot is squashed because the process stays at a fixed baseline most of the time, making any actual production variance appear as a mathematical outlier.
-
-Air_Pressurer (8.57% Outliers): This variable has a highly concentrated core. Because the normal operating range is extremely narrow, even standard, valid fluctuations are being flagged as red dots.
-
-Oxygen_Filler (7.25% Outliers): This represents a heavy-tailed distribution. There is a string of points extending toward higher values, which pulls the mean away from the median and creates persistent skewness.
-
-Temperature (4.75% Outliers): Similar to Oxygen_Filler, this has a right-skewed tail. While the percentage is lower, these extreme heat spikes can disproportionately influence linear model coefficients.
-
-PSC_CO2 (3.00% Outliers): This shows a discontinuous pattern. There is a small group of rows where CO2 levels are significantly higher than the rest of the production run, creating a gap in the data.
-
-**Strategy for Handling Outliers**
-
-Since losing 33.66% of the data by deleting rows is unacceptable, the following "Soft Fix" approach from Chapter 3 is recommended:
-
-Winsorizing (Capping): Set the values for all six variables to their 1st and 99th percentiles. This brings the extreme red dots to the edge of the acceptable range, neutralizing their negative impact on the model while keeping every single row of data.
-
-Spatial Sign Transformation: After capping, we apply the Spatial Sign. This projects the data onto a multidimensional sphere, ensuring that any remaining distance from the outliers doesn't overwhelm the model's loss function.
-
-Binary Indicator for Zero-Inflation: For Filler_Speed and MFR, we can consider adding a new column (e.g., Is_Running) to help the model distinguish between "Off" and "Active" states more clearly than a skewed number can.
-
-```{r}
-# Define a robust capping function
-cap_outliers <- function(x) {
-  # Calculate the 1st and 99th percentiles
-  qnts <- quantile(x, probs = c(0.01, 0.99), na.rm = TRUE)
-  
-  # Replace values outside those bounds
-  x[x < qnts[1]] <- qnts[1]
-  x[x > qnts[2]] <- qnts[2]
-  return(x)
-}
-
-# Define the list of stubborn variables
-stubborn_vars <- c("MFR", "Filler_Speed", "Oxygen_Filler", 
-                   "Temperature", "Air_Pressurer", "PSC_CO2")
-
-# Apply the cap to create a new dataset
-train_data_capped <- train_data_final |>
-  mutate(across(all_of(stubborn_vars), cap_outliers))
-
-# Apply the same logic to the test set 
-test_data_capped <- test_data_final |>
-  mutate(across(all_of(stubborn_vars), cap_outliers))
-```
-
-**Visualizing the Impact of Capping**
-
-```{r}
-library(tidyverse)
-library(e1071)
-library(gridExtra)
-
-# Prepare data for Skewness Comparison
-# Helper function to get skewness for the 6 stubborn variables
-calc_skew <- function(df, label) {
-  df |>
-    select(all_of(stubborn_vars)) |>
-    summarise(across(everything(), ~skewness(.x, na.rm = TRUE))) |>
-    pivot_longer(cols = everything(), names_to = "Predictor", values_to = "Skewness") |>
-    mutate(Version = label)
-}
-
-# Combine results
-skew_compare <- bind_rows(
-  calc_skew(train_data_final, "Original (Salmon)"),
-  calc_skew(train_data_capped, "Capped (Blue)")
-)
-
-# Skewness Bar Chart Comparison
-plot_skew <- ggplot(skew_compare, aes(x = reorder(Predictor, abs(Skewness)), y = Skewness, fill = Version)) +
-  geom_col(position = "dodge", color = "black", linewidth = 0.2) +
-  coord_flip() +
-  geom_hline(yintercept = c(-1, 1), linetype = "dashed", color = "red", linewidth = 1) +
-  scale_fill_manual(values = c("Original (Salmon)" = "salmon", "Capped (Blue)" = "skyblue")) +
-  labs(
-    title = "Impact of Capping on Skewness",
-    subtitle = "The Blue bars should be significantly shorter than the Salmon bars",
-    x = "Predictors", y = "Skewness Value"
-  ) +
-  theme_minimal()
-
-# Boxplot Comparison (example: Oxygen_Filler)
-# This shows how the 'string of pearls' is handled
-boxplot_compare <- bind_rows(
-  train_data_final |> select(Oxygen_Filler) |> mutate(Version = "Original"),
-  train_data_capped |> select(Oxygen_Filler) |> mutate(Version = "Capped")
-) |>
-  ggplot(aes(x = Version, y = Oxygen_Filler, fill = Version)) +
-  geom_boxplot(outlier.color = "red") +
-  scale_fill_manual(values = c("Original" = "salmon", "Capped" = "skyblue")) +
-  labs(title = "Outlier Compression", subtitle = "Oxygen_Filler Before vs After") +
-  theme_minimal() + theme(legend.position = "none")
-
-# Display both
-grid.arrange(plot_skew, boxplot_compare, ncol = 1)
-```
-While Capping (Winsorizing) squashed the most extreme values, the Spatial Sign is the specialized tool suggested in the Kuhn & Johnson chapter 3 of Applied Predictive Modeling, designed to neutralize the remaining influence of those red dots (outliers).
-
-Spatial Sign Transformation pulls every outlier toward the center of the data mass. It doesn't delete them; it just ensures they don't have enough weight to pull your model's predictions off-track.
-
-For the Spatial Sign to work correctly, the data must be Centered and Scaled first otherwise the sphere will be skewed and the transformation will actually make your data worse.
-
-**Applying the Spatial Sign Transformation, Scaling and Centering**
-
-```{r}
-library(caret)
-
-# We must include 'center' and 'scale' for 'spatialSign' to work
-spatial_plan <- preProcess(
-  train_data_capped |> select(-PH, -Brand_Code), 
-  method = c("center", "scale", "spatialSign")
-)
-
-# Apply the transformation to both datasets
-train_data_spatial <- predict(spatial_plan, train_data_capped)
-test_data_spatial <- predict(spatial_plan, test_data_capped)
-
-# Check the range of a stubborn variable
-# All values should now be between -1 and 1
-summary(train_data_spatial$Oxygen_Filler)
+# Output the dimensions to verify the split
+cat("Training Set Dimensions:", dim(train_set), "\n")
+cat("Validation Set Dimensions:", dim(val_set), "\n")
 
 ```
+If we fill in missing target values with our own guesses, we train the model to predict fake data instead of reality, creating a false sense of accuracy.
 
-**Visual Proof of Outlier Neutralization**
+## Remove Highly Correlated Predictors (Multicollinearity)
+The Rationale:
+As we noted in the EDA feedback, several predictors in this dataset (like Balling, Hyd.Pressure3, Density, etc.) are highly correlated with each other (correlation > 0.85). This is called multicollinearity.
 
-```{r}
-library(tidyverse)
-
-# 1. Gather the three versions of the data into one long format dataframe
-comparison_data <- bind_rows(
-  train_data_final   |> select(all_of(stubborn_vars)) |> mutate(Stage = "1. Original"),
-  train_data_capped  |> select(all_of(stubborn_vars)) |> mutate(Stage = "2. Capped"),
-  train_data_spatial |> select(all_of(stubborn_vars)) |> mutate(Stage = "3. Spatial Sign")
-) |>
-  pivot_longer(cols = -Stage, names_to = "Predictor", values_to = "Value") |>
-  mutate(Stage = factor(Stage, levels = c("1. Original", "2. Capped", "3. Spatial Sign")))
-
-# 2. Create the comparison visualization
-ggplot(comparison_data, aes(x = Stage, y = Value, fill = Stage)) +
-  geom_boxplot(outlier.color = "red", outlier.shape = 16, outlier.size = 1.2, alpha = 0.7) +
-  # Scales = "free_y" is critical because the Spatial Sign scale is much smaller (-1 to 1)
-  facet_wrap(~ Predictor, scales = "free_y", ncol = 3) +
-  scale_fill_manual(values = c(
-    "1. Original" = "salmon", 
-    "2. Capped" = "skyblue", 
-    "3. Spatial Sign" = "mediumpurple1"
-  )) +
-  labs(
-    title = "The Impact of Outlier Neutralization",
-    subtitle = "Observe how the red dots are pulled toward the center in Stage 3",
-    x = "",
-    y = "Calculated Value (Note the scale changes per stage)"
-  ) +
-  theme_minimal() +
-  theme(
-    axis.text.x = element_text(angle = 45, hjust = 1),
-    legend.position = "none",
-    strip.text = element_text(face = "bold")
-  )
-```
-Stage 1: Original (The Danger Zone): Raw data contains outliers with massive vertical tails. These extreme values exert too much leverage, forcing the model to skew its logic just to accommodate a few rogue points.
-
-Stage 2: Capped (The Initial Taming): Applying Winsorization (99th percentile capping) pulls the extreme into a set boundary. This removes their excessive leverage while keeping the rows in the dataset.
-
-Stage 3: Spatial Sign (The Golden State): The data is projected onto a multidimensional sphere. This centers the variables and brings remaining outliers so they are mathematically close to the mean, ensuring they no longer have the weight to pull the model off track.
+If two variables are perfectly moving together, they are essentially telling the model the exact same piece of information twice. Leaving them in confuses the algorithm and it doesn't know which variable to give credit to, slows down computation, and makes the model prone to overfitting. We need to identify these redundant variables in our training set and remove them from both sets.
 
 
-Earlier we saw that removing rows with outliers would have cost us 33.66% of your data. 
-Missing values create a similar problem in modeling the data.
-
-If 10% of rows have at least one NA, deleting those rows shrinks training data significantly.
-By imputing, we keep all 2,567 rows, which gives the model more examples to learn from, making it more robust and accurate.
+Now, we will calculate the correlation matrix on the numeric predictors. We use pairwise.complete.obs to ensure that the current missing values (NAs) don't crash our math. Then, we use the findCorrelation function to automatically flag the variables that cross our 0.85 threshold.
 
 ```{r}
-head(train_data_spatial)
-```
-
-
-**Feature Engineering: Binary Flags for Zero-Inflation**
-
-```{r}
-# We use the original data to identify 'True Zeros' before imputation fills them.
-# This explicitly tells the model when a machine was IDLE.
-train_data_spatial <- train_data_spatial |>
-  mutate(
-    MFR_Active = ifelse(train_data_final$MFR == 0, 0, 1),
-    Filler_Active = ifelse(train_data_final$Filler_Speed == 0, 0, 1),
-    Air_Pressurer_Active = ifelse(train_data_final$Air_Pressurer == 0, 0, 1)
-  )
-
-test_data_spatial <- test_data_spatial |>
-  mutate(
-    MFR_Active = ifelse(test_data_final$MFR == 0, 0, 1),
-    Filler_Active = ifelse(test_data_final$Filler_Speed == 0, 0, 1),
-    Air_Pressurer_Active = ifelse(test_data_final$Air_Pressurer == 0, 0, 1)
-  )
-
-#test_data_spatial
-```
-
-**Dealing with Missing Values (KNN Imputation)**
-
-```{r}
-# We fill the 208 gaps in MFR and others based on the 'neighborhood' of similar rows.
-# Note: knnImpute also centers and scales, but since we are already spatial-signed,
-# it will just focus on filling the holes.
-impute_proc <- preProcess(train_data_spatial |> select(-PH, -Brand_Code), method = "knnImpute")
-
-train_data_complete <- predict(impute_proc, train_data_spatial)
-test_data_complete  <- predict(impute_proc, test_data_spatial)
-
-# Verify: This should return 0
-cat("Total NAs remaining in Training Data:", sum(is.na(train_data_complete)), "\n")
-```
-
-
-**The "Pre-Encoding" Check**
-
-```{r}
-# Count total NAs in Brand_Code
-cat("Total NULLs in Brand_Code:", sum(is.na(train_data_complete$Brand_Code)), "\n")
-
-# View distribution including the NA count
-# 'useNA = "always"' ensures we see the Nulls as their own category
-table(train_data_complete$Brand_Code, useNA = "always")
-```
-The result shows that Brand_Code has 0 literal NULLs, but it does have 120 Hidden Nulls
-
-In R, empty strings ("") aren't technically NA, but for a predictive model, they are just as problematic. We need to handle those blanks before turning the brands into numeric columns.
-
-```{r}
-train_data_complete
-```
-
-**Resolving Blanks & Generating the Heatmap**
-
-```{r}
-# Resolve the 120 blanks in Brand_Code (before they become a dummy column)
-# We map the empty strings to Brand 'B' (the Mode)
-train_data_complete$Brand_Code[train_data_complete$Brand_Code == ""] <- "B"
-test_data_complete$Brand_Code[test_data_complete$Brand_Code == ""]   <- "B"
-
-# Re-run Dummy Encoding on the fixed Brand_Code
-dummies <- dummyVars(PH ~ ., data = train_data_complete)
-train_data_encoded <- as.data.frame(predict(dummies, newdata = train_data_complete))
-train_data_encoded$PH <- train_data_complete$PH
-
-# Calculate the Correlation Matrix (Excluding the target PH)
-# We use 'use = "pairwise.complete.obs"' as a safety measure
-cor_matrix <- cor(train_data_encoded |> select(-PH), use = "pairwise.complete.obs")
-
-# Handle any potential NAs in the correlation matrix 
-# We find columns that have 0 variance (constant columns)
-zero_var_cols <- which(apply(train_data_encoded |> select(-PH), 2, sd) == 0)
-if(length(zero_var_cols) > 0) {
-  train_data_encoded <- train_data_encoded[, -zero_var_cols]
-  cor_matrix <- cor(train_data_encoded |> select(-PH))
-}
-
-# Generate the Correlation Heatmap
+# Load required library for correlation plot
 library(corrplot)
-corrplot(cor_matrix, 
+library(dplyr)
+library(caret)
+
+# Isolate only the numeric predictor variables from the training set
+# (We exclude PH because it is the target, and Brand.Code because it is categorical)
+numeric_train <- train_set %>% select(where(is.numeric), -PH)
+
+# Calculate the correlation matrix
+# We use pairwise.complete.obs to safely handle the NAs currently in the data
+cor_matrix <- cor(numeric_train, use = "pairwise.complete.obs")
+
+# Find predictors with an absolute correlation greater than 0.85
+high_cor_indices <- findCorrelation(cor_matrix, cutoff = 0.85, exact = TRUE)
+high_cor_vars <- colnames(numeric_train)[high_cor_indices]
+
+cat("Variables identified for removal due to high correlation (>0.85):\n")
+print(high_cor_vars)
+
+# Remove these highly correlated variables from BOTH the training and validation sets
+train_set_reduced <- train_set %>% select(-all_of(high_cor_vars))
+val_set_reduced <- val_set %>% select(-all_of(high_cor_vars))
+
+cat("\nNew Training Set Dimensions:", dim(train_set_reduced), "\n")
+cat("New Validation Set Dimensions:", dim(val_set_reduced), "\n")
+```
+## Supporting Visualization:
+To visually prove why these specific variables were flagged for deletion, we can generate a targeted correlation plot. Instead of plotting all 30+ variables which gets messy, we will filter the matrix to only show the "problem" variables that have high correlations.
+
+```{r}
+# Find all variables involved in high correlation pairings (> 0.85 or < -0.85)
+high_cor_logical <- apply(abs(cor_matrix) > 0.85 & abs(cor_matrix) < 1, 1, any)
+problem_vars <- rownames(cor_matrix)[high_cor_logical]
+
+# Subset the correlation matrix to only include these highly correlated variables
+problem_cor_matrix <- cor_matrix[problem_vars, problem_vars]
+
+# Plot the focused correlation matrix
+corrplot(problem_cor_matrix, 
          method = "color", 
          type = "upper", 
-         order = "hclust", # Groups redundant "twin" variables together
-         tl.col = "black", 
-         tl.srt = 45, 
-         tl.cex = 0.5,     # Smaller text to fit all predictors
-         title = "Predictor Multicollinearity: Before Filtering",
-         mar = c(0,0,1,0))
+         addCoef.col = "black", # Add the actual correlation numbers on the plot
+         number.cex = 0.7,      # Adjust text size for the numbers
+         tl.col = "black",      # Make labels black
+         tl.cex = 0.8,
+         col = colorRampPalette(c("darkred", "white", "#483d8b"))(200),
+         title = "Multicollinearity: Variables with |r| > 0.85",
+         mar = c(0,0,2,0))      # Adjust margins to fit the title
 ```
-We could map those 120 blanks to a new label called "Unknown", however according to book: Applied Predictive Modeling chapter 3 by Kuhn & Johnson, if the number of missing values is small, simple imputation like the mode is preferred to avoid over-complicating the model with 'noise' categories.
 
-Interpretation:
+## What this proves:
+When I run the plot, I am able to see deep colors and high numbers (like 0.95 or 0.98) connecting variables like Density and Balling. By dropping the high_cor_vars vector, we strip out the redundancy while keeping the core information.
 
-This heatmap serves as a health check for the dataset, specifically identifying Multicollinearity—where multiple sensors are effectively telling the model the same thing.
+## multicollinearity (redundant variables)
 
-The "Problem Clusters" The Liquid/Sugar Cluster (Bottom Right): There is a massive dark blue block where Density, Balling, Balling_Lvl, Carb_Volume, and Alch_Rel intersect.
+The Diagonal: The dark purple 1.00 squares diagonally down the middle are just each variable compared to itself (Density correlates 100% with Density).
 
-Interpretation: These variables are nearly identical (approx 0.95+). In beverage production, density and sugar content are mathematically linked. Including all of them would "confuse" a linear model, making your coefficients unstable.
+The Dark Purple Clusters: These are the troublemakers. Look at the bottom right corner. Density, Balling, Alch.Rel, and Balling.Lvl are all correlating with each other at 0.90 to 0.98.
 
-The Pressure Sync (Top Left): Carb_Pressure1, Fill_Pressure, and Pressure_Setpoint are highly correlated.
+What this means: In a manufacturing context, these four sensors are essentially measuring the exact same physical property of the beverage like sugar concentration or specific gravity. If we give all four to the machine learning model, it gets overwhelmed with duplicated information.
 
-Interpretation: The system is perfectly tuned; when the setpoint moves, the sensors follow. We likely only need one of these to represent the "pressure state" of the run.
-
-Brand Artifacts (Red Blocks): The dark red area (e.g., Brand_CodeB vs. Brand_CodeD) is a result of Dummy Encoding.
-
-Interpretation: Since a batch can only be one brand at a time, if it is "Brand B," it mathematically cannot be "Brand D," creating a strong negative correlation.
-
-The (White/Light Zones):
-
-Variables like Temperature, Oxygen_Filler, and Filler_Level are surrounded by white/light colors.
-
-Interpretation: These are Independent Predictors. They aren't twins with anything else, meaning they provide unique, high-value information that the model can't get from any other sensor.
-
-**Removing Redundant Predictors**
+## Inspect the current state of our train_set_reduced
 
 ```{r}
+# Load dplyr just in case (comes with tidyverse)
+library(dplyr)
 
-# Identify the indices of variables to remove based on the 0.90 cutoff
-# 'cor_matrix' was created in your previous step
-high_cor_indices <- findCorrelation(cor_matrix, cutoff = 0.90)
+# Look at the structure, column names, and first few rows
+cat("--- Structure of Reduced Training Set ---\n")
+glimpse(train_set_reduced)
 
-# Extract the names of the variables being dropped for your report
-vars_to_remove <- colnames(cor_matrix)[high_cor_indices]
-
-cat("Predictors identified for removal due to redundancy:\n")
-print(vars_to_remove)
-
-# Create the final, optimized datasets
-# Removing these columns from both the Training and Evaluation sets
-train_ready <- train_data_encoded |> select(-all_of(vars_to_remove))
-test_ready  <- test_data_encoded  |> select(-all_of(vars_to_remove))
-
-# Final Sanity Check
-cat("\nFinal Preparation Check:\n")
-cat("Total Rows in Training:", nrow(train_ready), "\n")
-cat("Total Predictors remaining:", ncol(train_ready) - 1, "\n") # -1 for the target PH
-cat("Remaining NULLs:", sum(is.na(train_ready)), "\n")
-
+# Look at a quick statistical summary
+cat("\n--- Summary Statistics (Checking for NAs) ---\n")
+summary(train_set_reduced)
 ```
+Reduced Columns: We successfully went from 33 columns down to 27 columns. Density, Balling, and the other highly correlated variables are gone.
 
+PH is Safe: The target variable PH is still intact, and because of our fix in Step 1, it has exactly zero NAs!
 
-```{r message=FALSE, warning=FALSE}
-# Check column counts
-cat("Train columns (including PH):", ncol(train_ready), "\n")
-cat("Test columns (Predictors only):", ncol(test_ready), "\n")
+Missing Values Existfor now: We can clearly see NA's :178 under MFR and NA's :31 under Fill.Ounces.
 
-# Check if the predictor names are identical and in the same order
-# We remove PH from train for a fair comparison
-predictor_match <- all(colnames(train_ready |> select(-PH)) == colnames(test_ready))
-cat("Do all predictors match perfectly?", predictor_match)
-```
+## The Visualization Step: Mapping the NAs
+##The Rationale:
+
+vis_miss(): This gives us a bird's-eye view of the whole dataset, showing exactly where the holes are and calculating the total percentage of missing data.
+
+gg_miss_upset(): It shows us combinations of missing data. If Fill.Ounces and MFR frequently go missing on the exact same rows, this plot will flag that mechanical relationship.
 
 ```{r}
-#Get the names of the predictors that actually made it into your model
-# We remove 'PH' because the test set shouldn't have the answer key
-final_predictor_names <- colnames(train_ready |> select(-PH))
+# Load dplyr just in case
+library(dplyr)
 
-# Force the test data to only keep THOSE specific columns
-# This automatically drops the 4 extra variables causing the mismatch
-test_ready_aligned <- test_ready |> 
-  select(all_of(final_predictor_names))
+# Get the exact count of NAs for every single column
+na_counts <- colSums(is.na(train_set_reduced))
 
-# Final Verification Check
-cat("Train predictors:", length(final_predictor_names), "\n")
-cat("Test predictors:", ncol(test_ready_aligned), "\n")
+# Convert this into a neat data frame for easy reading
+na_summary <- data.frame(
+  Variable = names(na_counts),
+  Missing_Count = na_counts,
+  row.names = NULL # This just keeps the row names clean
+)
 
-# This should now return TRUE
-all(colnames(train_ready |> select(-PH)) == colnames(test_ready_aligned))
+# Filter to show ONLY columns with NAs, and sort them highest to lowest
+na_summary_clean <- na_summary %>%
+  filter(Missing_Count > 0) %>%
+  arrange(desc(Missing_Count))
+
+# Print the final, clean table
+cat("--- Exact NA Counts per Variable ---\n")
+print(na_summary_clean)
+```
+## Random Forest Imputation
+
+missForest is running a full machine learning prediction process for every single column that has an NA.
+
+It treats the missing data as the target to be predicted, and uses all the non-missing data as the clues.
+
+```{r}
+# Load required library
+library(missForest)
+library(dplyr)
+
+# Lock in the Brand.Code fix for BOTH sets
+# (Converting empty strings to true NAs, and making sure they are factors)
+train_set_reduced <- train_set_reduced %>%
+  mutate(Brand.Code = ifelse(Brand.Code == "", NA, as.character(Brand.Code))) %>%
+  mutate(Brand.Code = as.factor(Brand.Code))
+
+val_set_reduced <- val_set_reduced %>%
+  mutate(Brand.Code = ifelse(Brand.Code == "", NA, as.character(Brand.Code))) %>%
+  mutate(Brand.Code = as.factor(Brand.Code))
+
+# Separate the target variable (PH) so the imputer cannot cheat
+train_predictors <- train_set_reduced %>% select(-PH)
+val_predictors <- val_set_reduced %>% select(-PH)
+
+# Execute the Random Forest Imputation
+set.seed(42)
+cat("Starting Random Forest imputation on the Training Set. \n(Note: This might take a minute or two as it builds hundreds of trees...)\n")
+
+train_imputation <- missForest(train_predictors, 
+                               maxiter = 5,    
+                               ntree = 100,    
+                               verbose = TRUE) 
+
+# 4. Extract the clean data and reattach our target variable
+train_set_clean <- train_imputation$ximp
+train_set_clean$PH <- train_set_reduced$PH
+
+# 5. The Moment of Truth: Verify zero NAs remain!
+total_nas <- sum(is.na(train_set_clean))
+cat("\n--- Imputation Complete! ---\n")
+cat("Total NAs remaining in the training set:", total_nas, "\n")
+```
+training data is now fully preprocessed.
+
+Target variable isolated.
+
+Highly correlated variables removed.
+
+Missing values intelligently predicted.
+
+To reveal exactly what missForest predicted for the 94 missing Brand.Codes and the 178 missing MFRs!
+
+```{r}
+# Exposing the Brand.Code Guesses ---
+
+# Find the exact row numbers where Brand.Code was NA in the original data
+missing_brand_rows <- which(is.na(train_set_reduced$Brand.Code))
+
+# Extract what missForest predicted for those exact rows in the clean data
+predicted_brands <- train_set_clean$Brand.Code[missing_brand_rows]
+
+cat("--- Predictions for the 94 missing Brand.Codes ---\n")
+# A table will show us exactly how many of each brand it guessed
+print(table(predicted_brands))
+
+
+# Exposing the MFR Guesses ---
+
+# Find the row numbers where MFR was NA
+missing_mfr_rows <- which(is.na(train_set_reduced$MFR))
+
+# Extract the predictions
+predicted_mfr <- train_set_clean$MFR[missing_mfr_rows]
+
+cat("\n--- Summary of the 178 predicted MFR values ---\n")
+print(summary(predicted_mfr))
+
+
+# A Side-by-Side Snapshot ---
+
+# Let's look at the first 5 rows where MFR was missing to see the direct replacement
+mfr_comparison <- data.frame(
+  Row_Number = head(missing_mfr_rows, 5),
+  Original_MFR = train_set_reduced$MFR[head(missing_mfr_rows, 5)],
+  Predicted_MFR = train_set_clean$MFR[head(missing_mfr_rows, 5)]
+)
+
+cat("\n--- First 5 MFR Imputations (Side-by-Side) ---\n")
+print(mfr_comparison)
+```
+## Assessing Imputation Accuracy:
+
+## The Impact on Brand.Code
+
+The EDA highlighted that "B" is the most frequent Brand.Code, which often leads to a default strategy of mode imputation (replacing all missing values with "B"). However, the missForest results demonstrate the risk of that approach. Out of the 94 missing values, the algorithm classified 50 as "B", but it assigned 38 to "C", and the remaining 6 to "A" and "D". Relying solely on the overarching frequency distribution from the EDA would have introduced 44 misclassified records into the training data. By leveraging the complex relationships between the other machine settings—which the EDA proved were significantly different between brands—the algorithm correctly identified that the missing records represented a mix of different beverage formulations.
+
+## The Impact on MFR
+The EDA summary statistics established the global mean for MFR at approximately 704.9. If standard mean imputation had been applied, this value would have been plugged into all 178 missing rows. However, the mean of the algorithm's predictions for those specific missing rows is 501.2. This significant discrepancy confirms a pattern: the missing MFR values were not occurring completely at random. The factory was operating at a substantially lower mass flow rate when those data points failed to record. Standard mean imputation would have obscured this physical reality, artificially forcing high flow rates into rows where the manufacturing process was actually running slow.
+
+For each variable, lets isolates the exact rows that were missing and prints a statistical summary of what missForest predicted, placed directly beneath the baseline summary of the original factory data.
+
+```{r}
+# List of the remaining variables that contained NAs
+remaining_na_cols <- c("PSC.CO2", "Fill.Ounces", "PC.Volume", "PSC", 
+                       "Carb.Pressure1", "Hyd.Pressure4", "Carb.Pressure", "Carb.Temp")
+
+cat("--- missForest Predictions vs. Factory Baseline ---\n\n")
+
+for (col_name in remaining_na_cols) {
+  # 1Find the exact row numbers where this column was originally NA
+  missing_rows <- which(is.na(train_set_reduced[[col_name]]))
+  
+  # Extract the new imputed values from the clean dataset
+  imputed_values <- train_set_clean[[col_name]][missing_rows]
+  
+  # Extract the original, non-missing values to serve as our baseline
+  original_values <- train_set_reduced[[col_name]][!is.na(train_set_reduced[[col_name]])]
+  
+  # Print the comparison
+  cat(paste0(">>> Variable: ", col_name, " (", length(missing_rows), " Imputed Values) <<<\n"))
+  
+  cat("Factory Baseline (Original Non-Missing Data):\n")
+  print(summary(original_values))
+  
+  cat("missForest Predictions (Imputed Values Only):\n")
+  print(summary(imputed_values))
+  
+  cat("--------------------------------------------------\n\n")
+}
+```
+## The Random Glitches (No Pattern)
+When a sensor fails purely at random (like a brief power flicker), it happens across all normal operating conditions. Therefore, the imputed values should look almost identical to the baseline averages.
+
+Fill.Ounces: The baseline mean is 23.97, and the imputed mean is exactly 23.97. The medians match perfectly as well. This tells us the Fill.Ounces sensor just had random, isolated hiccups.
+
+Carb.Pressure: The baseline mean is 68.16, and the imputed mean is 69.29. Very close.
+
+If we had used standard mean imputation for these specific columns, it actually would have been fine because there was no hidden factory pattern to uncover.
+
+## The Mechanical Relationships (Strong Patterns)
+This is where the Random Forest proves its worth. For several variables, the imputed statistics are significantly different from the baseline, meaning these sensors went offline during very specific, abnormal machine states.
+
+Hyd.Pressure4 (The Smoking Gun): The baseline factory mean for this pressure sensor is 96.44. However, look at the predictions: the imputed mean is 111.6, and the minimum predicted value is 100.5! The algorithm discovered that this sensor does not fail randomly; it specifically fails or gets shut off when the hydraulic pressure is running exceptionally high.
+
+PC.Volume: The baseline mean is 0.277, but the imputed mean is 0.308. The algorithm noted that volume sensors tend to miss readings specifically when the physical volume in the system is higher than normal.
+
+Carb.Temp: The baseline mean is 141.1, but the imputed mean is 144.1. The missing temperature readings usually occurred during hotter-than-average manufacturing runs.
+
+## The Conclusion for the EDA Report
+If a simple mean imputation strategy had been applied across the board, the model would have injected average hydraulic pressures (96.44) into rows where the factory was actually experiencing high-pressure events (>111). By using multiple imputation, the integrity of the physical manufacturing states has been preserved for the predictive model.
+
+## Imputing the Validation Set
+
+The Rationale: The future machine learning model needs clean, complete data to make its predictions. If we leave NAs in the validation set, the model will crash when we try to test it later. We are going to use the exact same missForest algorithm we used on the training set to fill in the blanks here.
+
+```{r}
+# We already separated the predictors in our previous steps (val_predictors).
+# Now we run the imputation on that specific subset.
+
+set.seed(42)
+cat("Starting Random Forest imputation on the Validation Set...\n")
+
+# Execute missForest on the validation predictors
+val_imputation <- missForest(val_predictors, 
+                               maxiter = 5,    
+                               ntree = 100,    
+                               verbose = TRUE) 
+
+# Extract the clean data
+val_set_clean <- val_imputation$ximp
+
+# Put the target variable (PH) safely back into the dataset
+val_set_clean$PH <- val_set_reduced$PH
+
+# The Final Check: Verify zero NAs remain
+total_val_nas <- sum(is.na(val_set_clean))
+cat("\n--- Validation Imputation Complete! ---\n")
+cat("Total NAs remaining in the validation set:", total_val_nas, "\n")
+```
+## Assessing Model Validation
+
+We have noticed two slight differences from training set output:
+
+It went the full 5 iterations: With a smaller dataset (only ~500 rows), the algorithm has fewer "clues" to learn from, so it takes a little longer to settle on its final predictions.
+
+The error is slightly higher: The numeric error was ~23% and categorical was ~10%. This is completely normal and expected for a validation set. It is still a highly accurate imputation that respects the physical factory settings.
+
+## Centering and Scaling (Standardization)
+
+## The Rationale: 
+
+Right now, Fill.Ounces is measured in the 20s, Pressure is in the 100s, and PSC is in tiny decimals like 0.05. If we use a distance-based machine learning model (like K-Nearest Neighbors, Neural Networks, or Support Vector Machines), the algorithm will look at those numbers and assume that Pressure is the most important variable simply because the numbers are bigger.
+
+To fix this, we standardizes the data:
+
+Center: Subtracts the mean (so every variable's average becomes 0).
+
+Scale: Divides by the standard deviation (so every variable's spread is 1).
+We must calculate the average and standard deviation ONLY on the Training Set, and then apply that exact same math to the Validation Set. If we calculate the validation set's own average, we leak future data into our model!
+
+```{r}
+# Load caret if it isn't already
+library(caret)
+library(dplyr)
+
+# Identify ONLY the numeric predictor columns 
+# (We exclude our target 'PH', and 'where(is.numeric)' automatically excludes 'Brand.Code')
+numeric_cols <- train_set_clean %>% 
+  select(where(is.numeric), -PH) %>% 
+  names()
+
+# Build the Scaling Math based ONLY on the Training Set
+scale_model <- preProcess(train_set_clean[, numeric_cols], 
+                          method = c("center", "scale"))
+
+# Apply the scaling math to the Training Set
+train_set_final <- predict(scale_model, train_set_clean)
+
+# Apply the exact same scaling math to the Validation Set
+val_set_final <- predict(scale_model, val_set_clean)
+
+cat("--- Final Preprocessing Complete ---\n")
+cat("Check the summary of Fill.Ounces to see the new standardized scale:\n")
+summary(train_set_final$Fill.Ounces)
 ```
 
+## Outliers are "Evidence," not "Errors"
+The boxplots in the EDA showed many extreme values (like spikes in Oxygen.Filler).
 
+The Insight: Because these spikes often happen in patterns, the EDA suggests they are real operational machine behaviors. Deleting them would be like a detective throwing away a fingerprint just because it looked messy.We need those outliers to help the model predict PH when things go wrong on the production line.
 
