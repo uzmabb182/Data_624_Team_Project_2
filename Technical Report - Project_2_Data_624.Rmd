@@ -532,3 +532,7 @@ As I noted during Exploratory Data Analysis (EDA), several predictors in this da
 
 I calculate the correlation matrix on the numeric predictors using pairwise.complete.obs to safely handle current NAs. Then, I use the findCorrelation function to automatically flag variables crossing the 0.85 threshold.
 
+```{r}
+
+```
+
